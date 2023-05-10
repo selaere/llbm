@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>,leader lead board man? (llbm)</title>
+    <script src="pkg/main.js"></script>
+    <style>
+body {
+    margin: 2% 4%;
+    font-family: sans-serif;
+}
+table {table-layout:fixed;}
+td {
+    min-width: 3em; max-width: 3em; height: 3em;
+    white-space: nowrap; overflow: hidden; text-overflow: clip;
+    text-align: center; padding-top: 5px; box-sizing: border-box;
+    border: 1px solid black;
+    line-height: 95%;
+}
+    </style>
+</head>
+
+<body>
+    <div id="myapp"></div>
+    <script>
+    var app = Elm.Main.init({
+        node: document.getElementById('myapp')
+    });
+    </script>
+</body>
+</html>
