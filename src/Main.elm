@@ -11,7 +11,6 @@ import Html.Events as Events
 import Murmur3 exposing (hashString)
 import Mode exposing (Mode)
 import Json.Decode
-import Set
 
 main : Program () Model Msg
 main = Browser.element {
@@ -64,6 +63,7 @@ parse lns = String.lines lns
     |> List.filterMap (parse_score >> (Maybe.map (\x-> (x.mode, x))))
     |> Dict.fromList
 
+on_change : (String -> msg) -> Attribute msg
 on_change tagger = Json.Decode.map tagger Events.targetValue
     |> Json.Decode.map (\x->(x, True))
     |> Events.stopPropagationOn "change"
@@ -131,9 +131,7 @@ make_table state =
         state.modes |> doif state.scol (\i->0::i)
         |> List.take (x + 1)
         |> List.map (\m2 -> make_cell state.scores (Mode.merge m1 m2))
-        |> doif state.scol (\list-> list ++ [
-            Html.td
-            [Attrs.style "border-width" "0 0 1px 1px"]
-            [Html.small [] [text (Mode.toString m1)]]])
+        |> doif state.scol     (\i->i++[ Html.td [Attrs.class "diag"] [text (Mode.toString m1)] ])
+        |> doif (not state.scol) ((::) ( Html.td [Attrs.class "left"] [text (Mode.toString m1)] ))
         |> Html.tr [])
     |> Html.table []

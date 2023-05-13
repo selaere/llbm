@@ -1,5 +1,5 @@
 module Mode exposing (..)
-import Bitwise exposing (or, and)
+import Bitwise exposing (or, and, shiftLeftBy)
 import Array exposing (..)
 import Dict exposing (..)
 
@@ -21,8 +21,9 @@ fromString : String -> Mode
 fromString = String.toList >> List.filterMap fromChar >> List.foldl merge 0
 
 toString : Mode -> String
-toString mode = Dict.toList modes_dict
-    |> List.filterMap (\(c,i) -> if and i mode /= 0 then Just c else Nothing)
+toString mode = mode_chars
+    |> List.indexedMap Tuple.pair
+    |> List.filterMap (\(i,c) -> if and (shiftLeftBy i 1) mode /= 0 then Just c else Nothing)
     |> String.fromList
 
 merge : Mode -> Mode -> Mode
