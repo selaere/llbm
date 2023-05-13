@@ -74,35 +74,37 @@ view model = case model of
     Loading -> text "loading..."
     Success state -> Html.div [] [
         make_table state,
-        Html.label [] [
-            Html.input [
-                type_ "checkbox",
-                Events.onCheck ( \bool -> Do (\s-> {s | scol=bool}))] [],
-            text "one-letter modes on single column"],
-        Html.br [] [],
-        Html.label [] [
-            text "modes: ",
-            Html.input [
-                type_ "text",
-                Attrs.size 40,
-                Attrs.value ( 
-                    state.modes
-                    |> List.map Mode.toString
-                    |> String.join " " ),
-                on_change ( \m -> Do (\s-> {s | modes=
-                    String.words m |> List.map Mode.fromString}))] []],
-        Html.button [Events.onClick (Do (\s-> {s|modes=Mode.modes}))] [text "reset"],
-        Html.label [] [
-            text " add to all: ",
-            Html.input [
-                type_ "text",
-                Attrs.value "",
-                on_change( \ms -> Do (\s -> {s | modes=
-                    let m1 = Mode.fromString ms in
-                    s.modes |> List.filterMap (\m2->
-                        let m = Mode.merge m1 m2 in
-                        if m1 /= m then Just m else Nothing)}))
-            ] []]]
+        Html.main_ [] [
+            Html.label [] [
+                Html.input [
+                    type_ "checkbox",
+                    Events.onCheck ( \bool -> Do (\s-> {s | scol=bool}))] [],
+                text "one-letter modes on single column"],
+            Html.br [] [],
+            Html.label [] [
+                text "modes: ",
+                Html.input [
+                    type_ "text",
+                    Attrs.size 40,
+                    Attrs.value ( 
+                        state.modes
+                        |> List.map Mode.toString
+                        |> String.join " " ),
+                    on_change ( \m -> Do (\s-> {s | modes=
+                        String.words m |> List.map Mode.fromString}))] []],
+            Html.button [Events.onClick (Do (\s-> {s|modes=Mode.modes}))] [text "reset"],
+            Html.label [] [
+                text " add to all: ",
+                Html.input [
+                    type_ "text",
+                    Attrs.value "",
+                    on_change( \ms -> Do (\s -> {s | modes=
+                        let m1 = Mode.fromString ms in
+                        s.modes |> List.filterMap (\m2->
+                            let m = Mode.merge m1 m2 in
+                            if m1 /= m then Just m else Nothing)}))
+                ] []]
+        ]]
 
 player_color : String -> Attribute msg
 player_color name =
