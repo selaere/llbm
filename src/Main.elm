@@ -11,6 +11,7 @@ import Html.Events as Events
 import Murmur3 exposing (hashString)
 import Mode exposing (Mode)
 import Json.Decode
+import Time
 
 main : Program () Model Msg
 main = Browser.element {
@@ -48,14 +49,16 @@ update msg model = case msg of
 type alias Score = {
     score: Int,
     mode: Mode,
-    date: String,
+    date: Time.Posix,
     owner: String }
 
 parse_score : String -> Maybe Score
 parse_score ln = case String.split " " ln of
-    (score :: mode :: date :: name) -> 
-        String.toInt score
-        |> Maybe.map (\scorenum -> Score scorenum (Mode.fromString mode) date (String.join "," name))
+    (scorestr :: mode :: datestr :: name) -> 
+        String.toInt scorestr |> Maybe.map (\score ->
+        String.toInt datestr  |> Maybe.map (\date ->
+            Score score (Mode.fromString mode) (Time.millisToPosix (date * 1000)) (String.join "," name)
+        )) |> Maybe.andThen identity
     _ -> Nothing
 
 parse : String -> Dict Mode Score
@@ -110,17 +113,47 @@ player_color name =
     let lgt = ((hash // 360) |> modBy 45) + 40 |> String.fromInt in
     Attrs.style "background-color" ("hsl("++hue++",60%,"++lgt++"%")
 
+fmt_date : Time.Posix -> String
+fmt_date date =
+    let 
+        fromMonth month = case month of
+            Time.Jan -> 1  -- WHAT the FUCK elm/time
+            Time.Feb -> 2  -- what on EARTH were you thinking
+            Time.Mar -> 3  -- did you really expect noöne to need this
+            Time.Apr -> 4  -- it's fucking defined there it's just private
+            Time.May -> 5  -- like ?????
+            Time.Jun -> 6  -- > Represents a Month so that you can convert it to a String or Int however you please.
+            Time.Jul -> 7  -- oh so how do you convert it into an Int?
+            Time.Aug -> 8  -- NOPE
+            Time.Sep -> 9  -- STUPID QUESTION
+            Time.Oct -> 10 -- hate this stupid ass language
+            Time.Nov -> 11 -- and there's no way to compress this down
+            Time.Dec -> 12 -- if i were using elm/format this would take 3 times as many lines
+        padzero digits = String.fromInt >> String.padLeft digits '0'
+        t thing = (thing Time.utc date)
+        ts digits = t >> padzero digits
+    in
+        (ts 4 Time.toYear) ++ "-" ++
+        (t Time.toMonth |> fromMonth |> padzero 2) ++ "-" ++
+        (ts 2 Time.toDay) ++ " " ++
+        (ts 2 Time.toHour) ++ ":" ++
+        (ts 2 Time.toMinute) ++ ":" ++
+        (ts 2 Time.toSecond) ++ " (UTC+00:00)"
+
 make_cell : Dict Mode Score -> Mode -> Html msg
-make_cell scores mode = case Dict.get mode scores of
-    Just {score, owner} -> [
-        text (String.fromInt score),
-        Html.small [] [text (" " ++ Mode.toString mode)],
-        Html.br [] [],
-        Html.small [] [text owner] ]
-        |> Html.a [Attrs.href ("https://ubq323.website/ffbm#" ++ Mode.toString mode)]
-        |> List.singleton
-        |> Html.td [player_color owner]
-    Nothing -> Html.td [] [Html.small [] [text (Mode.toString mode)]]
+make_cell scores mode = 
+    let cell attrs = Html.a [Attrs.href ("https://ubq323.website/ffbm#" ++ Mode.toString mode)] >> List.singleton >> Html.td attrs in
+    case Dict.get mode scores of
+        Just {score, owner, date} -> [
+            text (String.fromInt score),
+            Html.small [] [text (" " ++ Mode.toString mode)],
+            Html.br [] [],
+            Html.small [] [text owner] ]
+            |> cell [player_color owner, Attrs.title (
+                owner ++ " " ++ (String.fromInt score) ++ " in " ++ (Mode.toString mode) ++ " at "
+                ++ (fmt_date date))]
+        Nothing -> [text (Mode.toString mode)] |> cell []
+    
 
 doif : Bool -> (a -> a) -> (a -> a)
 doif bl fun = if bl then fun else identity
