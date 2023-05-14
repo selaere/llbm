@@ -52,7 +52,7 @@ type alias Score = {
     owner: String }
 
 parse_score : String -> Maybe Score
-parse_score ln = case String.split "," ln of
+parse_score ln = case String.split " " ln of
     (score :: mode :: date :: name) -> 
         String.toInt score
         |> Maybe.map (\scorenum -> Score scorenum (Mode.fromString mode) date (String.join "," name))
@@ -86,10 +86,7 @@ view model = case model of
                 Html.input [
                     type_ "text",
                     Attrs.size 40,
-                    Attrs.value ( 
-                        state.modes
-                        |> List.map Mode.toString
-                        |> String.join " " ),
+                    Attrs.value (state.modes |> List.map Mode.toString |> String.join " "),
                     on_change ( \m -> Do (\s-> {s | modes=
                         String.words m |> List.map Mode.fromString}))] []],
             Html.button [Events.onClick (Do (\s-> {s|modes=Mode.modes}))] [text "reset"],
@@ -101,8 +98,8 @@ view model = case model of
                     on_change( \ms -> Do (\s -> {s | modes=
                         let m1 = Mode.fromString ms in
                         s.modes |> List.filterMap (\m2->
-                            let m = Mode.merge m1 m2 in
-                            if m1 /= m then Just m else Nothing)}))
+                            if Mode.intersect m1 m2 /= 0 then Nothing else
+                                Just (Mode.merge m1 m2))}))
                 ] []]
         ]]
 
@@ -115,11 +112,14 @@ player_color name =
 
 make_cell : Dict Mode Score -> Mode -> Html msg
 make_cell scores mode = case Dict.get mode scores of
-    Just {score, owner} -> Html.td [player_color owner] [
+    Just {score, owner} -> [
         text (String.fromInt score),
         Html.small [] [text (" " ++ Mode.toString mode)],
         Html.br [] [],
         Html.small [] [text owner] ]
+        |> Html.a [Attrs.href ("https://ubq323.website/ffbm#" ++ Mode.toString mode)]
+        |> List.singleton
+        |> Html.td [player_color owner]
     Nothing -> Html.td [] [Html.small [] [text (Mode.toString mode)]]
 
 doif : Bool -> (a -> a) -> (a -> a)

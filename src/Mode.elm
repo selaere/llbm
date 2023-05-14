@@ -4,7 +4,7 @@ import Array exposing (..)
 import Dict exposing (..)
 
 mode_chars : List Char
-mode_chars = String.toList "bwuipscmhaedtnvklgj"
+mode_chars = String.toList "bwuipscmhaedtnvklgjy"
 
 modes_dict : Dict Char Mode
 modes_dict = mode_chars |> List.indexedMap (\i->\x-> (x, 2^i)) |> Dict.fromList
@@ -28,3 +28,6 @@ toString mode = mode_chars
 
 merge : Mode -> Mode -> Mode
 merge = or
+
+intersect : Mode -> Mode -> Mode
+intersect = and
