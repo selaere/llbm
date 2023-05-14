@@ -23,6 +23,7 @@ main = Browser.element {
 type alias State = {
     scores: Dict Mode Score,
     scol: Bool,
+    context: Mode,
     modes: List Mode }
 
 type Model
@@ -40,7 +41,7 @@ type Msg
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model = case msg of
     GotText result -> case result of
-        Ok fullText -> (Success { scores=parse fullText, scol=False, modes=Mode.modes}, Cmd.none)
+        Ok fullText -> (Success { scores=parse fullText, scol=False, context=0, modes=Mode.modes}, Cmd.none)
         Err _ -> (Failure, Cmd.none)
     Do thing -> case model of
         Success state -> (Success (thing state), Cmd.none)
@@ -76,6 +77,14 @@ view model = case model of
     Failure -> text "loading failed epically"
     Loading -> text "loading..."
     Success state -> Html.div [] [
+        Html.h1 [] [text ",leader lead board man? (llbm)"],
+        if state.context == 0 then text "" else 
+            Html.p [] [
+                Html.text "using modes ",
+                Html.b [] [text (Mode.toString state.context)],
+                Html.text ". ",
+                Html.button [Events.onClick (Do (\s-> {s|context=0}))] [text "reset"]
+            ],
         make_table state,
         Html.main_ [] [
             Html.label [] [
@@ -92,18 +101,7 @@ view model = case model of
                     Attrs.value (state.modes |> List.map Mode.toString |> String.join " "),
                     on_change ( \m -> Do (\s-> {s | modes=
                         String.words m |> List.map Mode.fromString}))] []],
-            Html.button [Events.onClick (Do (\s-> {s|modes=Mode.modes}))] [text "reset"],
-            Html.label [] [
-                text " add to all: ",
-                Html.input [
-                    type_ "text",
-                    Attrs.value "",
-                    on_change( \ms -> Do (\s -> {s | modes=
-                        let m1 = Mode.fromString ms in
-                        s.modes |> List.filterMap (\m2->
-                            if Mode.intersect m1 m2 /= 0 then Nothing else
-                                Just (Mode.merge m1 m2))}))
-                ] []]
+            Html.button [Events.onClick (Do (\s-> {s|modes=Mode.modes}))] [text "reset"]
         ]]
 
 player_color : String -> Attribute msg
@@ -158,15 +156,20 @@ make_cell scores mode =
 doif : Bool -> (a -> a) -> (a -> a)
 doif bl fun = if bl then fun else identity
 
-make_table : State -> Html msg
+make_table : State -> Html Msg
 make_table state =
-    state.modes
+    let 
+        modes = state.modes |> List.filterMap (\m->
+            if Mode.intersect state.context m /= 0 then Nothing else
+                Just (Mode.merge state.context m))
+        header class m = Html.th [Attrs.class class, Events.onClick(Do (\s -> {s|context=m}))] [text (Mode.toString m)]
+    in modes
     |> List.indexedMap Tuple.pair
     |> List.map (\(x, m1) ->
-        state.modes |> doif state.scol (\i->0::i)
+        modes |> doif state.scol (\i->0::i)
         |> List.take (x + 1)
         |> List.map (\m2 -> make_cell state.scores (Mode.merge m1 m2))
-        |> doif state.scol     (\i->i++[ Html.td [Attrs.class "diag"] [text (Mode.toString m1)] ])
-        |> doif (not state.scol) ((::) ( Html.td [Attrs.class "left"] [text (Mode.toString m1)] ))
+        |> doif state.scol     (\i->i++[ header "diag" m1])
+        |> doif (not state.scol) ((::) ( header "left" m1 ))
         |> Html.tr [])
     |> Html.table []
