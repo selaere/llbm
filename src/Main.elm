@@ -8,6 +8,7 @@ import Dict exposing (Dict)
 import Html exposing (Attribute)
 import Html.Attributes as Attrs exposing (type_)
 import Html.Events as Events
+import List exposing (singleton)
 import Murmur3 exposing (hashString)
 import Mode exposing (Mode)
 import Json.Decode
@@ -146,6 +147,16 @@ menu state = Html.main_ [] [
             on_radio_button ByDate] [],
         text " date"
     ],
+    (if state.coloring /= ByDate then text "" else
+        [("prehistory", 0), ("2020", 1577836800), ("2021", 1609459200), ("2022", 1640995200), ("2023", 1672531200)]
+        |> List.map (\(year, time)->
+            text year |> singleton |> Html.td [
+                Attrs.style "background-color" (
+                    player_color ByDate {score=0,mode=0,owner="",date=Time.millisToPosix (1000 * time)})
+            ]
+        )
+        |> Html.tr [] |> singleton |> Html.table [Attrs.style "display" "inline"]
+    ),
     Html.br [] [],
     Html.label [] [
         Html.input [ type_ "radio", Attrs.name "color",
@@ -182,37 +193,30 @@ fmt_date date =
         (ts 2 Time.toMinute) ++ ":" ++
         (ts 2 Time.toSecond) ++ " (UTC+00:00)"
 
-player_color : Coloring -> Score -> {hue: Int, lgt: Int}
+player_color : Coloring -> Score -> String
 player_color coloring score =
-    case coloring of
-        ByName seed ->
-            let hash = hashString seed score.owner in
-            { hue = hash |> modBy 360
-            , lgt = ((hash // 360) |> modBy 45) + 40}
-        ByDate -> 
-            { hue = case Time.toYear Time.utc score.date of
-                1970 -> 0
-                2020 -> 40
-                2021 -> 100
-                2022 -> 140
-                _    -> 180
-            , lgt = (
-                (Time.toMonth Time.utc score.date |> fromMonth)
-                * 30 + (Time.toDay Time.utc score.date)
-            ) * 30 // 360 + 55 }
-        ByScore ->
-            { hue = 40
-            , lgt = score.score + 3 |> toFloat
-                |> logBase (1002 ^ (1/45)) |> (+) 40 |> floor }
+    let 
+        {hue, lgt} = case coloring of
+            ByName seed ->
+                let hash = hashString seed score.owner in
+                { hue = hash |> modBy 360
+                , lgt = ((hash // 360) |> modBy 45) + 40}
+            ByDate -> 
+                { hue = (Time.posixToMillis score.date // 1000 - 1577836800) // 500000 |> max -20
+                , lgt = 60 }
+            ByScore ->
+                { hue = 40
+                , lgt = score.score + 3 |> toFloat
+                    |> logBase (1002 ^ (1/45)) |> (+) 40 |> floor }
+    in "hsl("++(String.fromInt hue)++",60%,"++(String.fromInt lgt)++"%"
 
 make_cell : State -> Mode -> Html msg
 make_cell state mode = 
-    let cell attrs = Html.a [Attrs.href ("https://ubq323.website/ffbm#" ++ Mode.toString mode)] >> List.singleton >> Html.td attrs in
+    let cell attrs = Html.a [Attrs.href ("https://ubq323.website/ffbm#" ++ Mode.toString mode)] >> singleton >> Html.td attrs in
     case Dict.get mode state.scores of
         Just ({score, owner, date} as sco) -> 
             cell [
-                let {hue, lgt} = player_color state.coloring sco in
-                Attrs.style "background-color" ("hsl("++(String.fromInt hue)++",60%,"++(String.fromInt lgt)++"%"),
+                Attrs.style "background-color" (player_color state.coloring sco),
                 Attrs.title ( 
                     owner ++ " " ++ (String.fromInt score) ++ " in " ++ (Mode.toString mode) ++ " at " ++ (fmt_date date))
             ] [
