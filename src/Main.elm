@@ -24,7 +24,13 @@ type alias State = {
     scores: Dict Mode Score,
     scol: Bool,
     context: Mode,
+    coloring: Coloring,
     modes: List Mode }
+
+type Coloring
+    = ByName Int
+    | ByDate
+    | ByScore
 
 type Model
     = Failure
@@ -41,7 +47,12 @@ type Msg
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model = case msg of
     GotText result -> case result of
-        Ok fullText -> (Success { scores=parse fullText, scol=False, context=0, modes=Mode.modes}, Cmd.none)
+        Ok fullText -> (Success {
+            scores = parse fullText,
+            scol = False,
+            context = 0,
+            coloring = ByName 3054,
+            modes = Mode.modes }, Cmd.none)
         Err _ -> (Failure, Cmd.none)
     Do thing -> case model of
         Success state -> (Success (thing state), Cmd.none)
@@ -86,47 +97,80 @@ view model = case model of
                 Html.button [Events.onClick (Do (\s-> {s|context=0}))] [text "reset"]
             ],
         make_table state,
-        Html.main_ [] [
-            Html.label [] [
-                Html.input [
-                    type_ "checkbox",
-                    Events.onCheck ( \bool -> Do (\s-> {s | scol=bool}))] [],
-                text "one-letter modes on single column"],
-            Html.br [] [],
-            Html.label [] [
-                text "modes: ",
-                Html.input [
-                    type_ "text",
-                    Attrs.size 40,
-                    Attrs.value (state.modes |> List.map Mode.toString |> String.join " "),
-                    on_change ( \m -> Do (\s-> {s | modes=
-                        String.words m |> List.map Mode.fromString}))] []],
-            Html.button [Events.onClick (Do (\s-> {s|modes=Mode.modes}))] [text "reset"]
-        ]]
+        menu state
+        ]
 
-player_color : String -> Attribute msg
-player_color name =
-    let hash = hashString 3054 name in
-    let hue = hash |> modBy 360 |> String.fromInt in
-    let lgt = ((hash // 360) |> modBy 45) + 40 |> String.fromInt in
-    Attrs.style "background-color" ("hsl("++hue++",60%,"++lgt++"%")
+on_radio_button : Coloring -> Attribute Msg
+on_radio_button coloring = Events.onCheck (\bool -> Do (if bool then \m->{m|coloring = coloring} else identity))
+
+menu : State -> Html Msg
+menu state = Html.main_ [] [
+    Html.label [] [
+        Html.input [
+            type_ "checkbox",
+            Events.onCheck ( \bool -> Do (\s-> {s | scol=bool}))] [],
+        text "one-letter modes on single column"],
+    Html.br [] [],
+    Html.label [] [
+        text "modes: ",
+        Html.input [
+            type_ "text",
+            Attrs.size 40,
+            Attrs.value (state.modes |> List.map Mode.toString |> String.join " "),
+            on_change ( \m -> Do (\s-> {s | modes=
+                String.words m |> List.map Mode.fromString}))] []],
+    Html.button [Events.onClick (Do (\s-> {s|modes=Mode.modes}))] [text "reset"],
+    Html.br [] [],
+    text "color by:",
+    Html.br [] [],
+    Html.label [] [
+        Html.input [ type_ "radio", Attrs.name "color",
+            Attrs.checked (case state.coloring of
+                ByName _ -> True
+                _ -> False),
+            on_radio_button (ByName 3054)] [],
+        text " name"
+    ],
+    (case state.coloring of
+        ByName num -> Html.label [] [
+            text " seed: ",
+            Html.input [
+                type_ "number",
+                Attrs.value (String.fromInt num),
+                Events.onInput ( \m -> Do (\s-> {s | coloring=String.toInt m |> Maybe.withDefault 3054 |> ByName}))] []]
+        _ -> text ""),
+    Html.br [] [],
+    Html.label [] [
+        Html.input [ type_ "radio", Attrs.name "color",
+            Attrs.checked (state.coloring == ByDate),
+            on_radio_button ByDate] [],
+        text " date"
+    ],
+    Html.br [] [],
+    Html.label [] [
+        Html.input [ type_ "radio", Attrs.name "color",
+            Attrs.checked (state.coloring == ByScore),
+            on_radio_button ByScore] [],
+        text " score" ]]
+
+fromMonth : Time.Month -> Int
+fromMonth month = case month of
+    Time.Jan -> 1  -- WHAT the FUCK elm/time
+    Time.Feb -> 2  -- what on EARTH were you thinking
+    Time.Mar -> 3  -- did you really expect no one to need this
+    Time.Apr -> 4  -- it's fucking defined there it's just private
+    Time.May -> 5  -- like ?????
+    Time.Jun -> 6  -- > Represents a Month so that you can convert it to a String or Int however you please.
+    Time.Jul -> 7  -- oh so how do you convert it into an Int?
+    Time.Aug -> 8  -- NOPE
+    Time.Sep -> 9  -- STUPID QUESTION
+    Time.Oct -> 10 -- hate this stupid ass language
+    Time.Nov -> 11 -- and there's no way to compress this down
+    Time.Dec -> 12 -- if i were using elm/format this would take 3 times as many lines
 
 fmt_date : Time.Posix -> String
 fmt_date date =
     let 
-        fromMonth month = case month of
-            Time.Jan -> 1  -- WHAT the FUCK elm/time
-            Time.Feb -> 2  -- what on EARTH were you thinking
-            Time.Mar -> 3  -- did you really expect noöne to need this
-            Time.Apr -> 4  -- it's fucking defined there it's just private
-            Time.May -> 5  -- like ?????
-            Time.Jun -> 6  -- > Represents a Month so that you can convert it to a String or Int however you please.
-            Time.Jul -> 7  -- oh so how do you convert it into an Int?
-            Time.Aug -> 8  -- NOPE
-            Time.Sep -> 9  -- STUPID QUESTION
-            Time.Oct -> 10 -- hate this stupid ass language
-            Time.Nov -> 11 -- and there's no way to compress this down
-            Time.Dec -> 12 -- if i were using elm/format this would take 3 times as many lines
         padzero digits = String.fromInt >> String.padLeft digits '0'
         t thing = (thing Time.utc date)
         ts digits = t >> padzero digits
@@ -138,18 +182,45 @@ fmt_date date =
         (ts 2 Time.toMinute) ++ ":" ++
         (ts 2 Time.toSecond) ++ " (UTC+00:00)"
 
-make_cell : Dict Mode Score -> Mode -> Html msg
-make_cell scores mode = 
+player_color : Coloring -> Score -> {hue: Int, lgt: Int}
+player_color coloring score =
+    case coloring of
+        ByName seed ->
+            let hash = hashString seed score.owner in
+            { hue = hash |> modBy 360
+            , lgt = ((hash // 360) |> modBy 45) + 40}
+        ByDate -> 
+            { hue = case Time.toYear Time.utc score.date of
+                1970 -> 0
+                2020 -> 40
+                2021 -> 100
+                2022 -> 140
+                _    -> 180
+            , lgt = (
+                (Time.toMonth Time.utc score.date |> fromMonth)
+                * 30 + (Time.toDay Time.utc score.date)
+            ) * 30 // 360 + 55 }
+        ByScore ->
+            { hue = 40
+            , lgt = score.score + 3 |> toFloat
+                |> logBase (1002 ^ (1/45)) |> (+) 40 |> floor }
+
+make_cell : State -> Mode -> Html msg
+make_cell state mode = 
     let cell attrs = Html.a [Attrs.href ("https://ubq323.website/ffbm#" ++ Mode.toString mode)] >> List.singleton >> Html.td attrs in
-    case Dict.get mode scores of
-        Just {score, owner, date} -> [
-            text (String.fromInt score),
-            Html.small [] [text (" " ++ Mode.toString mode)],
-            Html.br [] [],
-            Html.small [] [text owner] ]
-            |> cell [player_color owner, Attrs.title (
-                owner ++ " " ++ (String.fromInt score) ++ " in " ++ (Mode.toString mode) ++ " at "
-                ++ (fmt_date date))]
+    case Dict.get mode state.scores of
+        Just ({score, owner, date} as sco) -> 
+            cell [
+                let {hue, lgt} = player_color state.coloring sco in
+                Attrs.style "background-color" ("hsl("++(String.fromInt hue)++",60%,"++(String.fromInt lgt)++"%"),
+                Attrs.title ( 
+                    owner ++ " " ++ (String.fromInt score) ++ " in " ++ (Mode.toString mode) ++ " at " ++ (fmt_date date))
+            ] [
+                text (String.fromInt score),
+                Html.small [] [text (" " ++ Mode.toString mode)],
+                Html.br [] [],
+                Html.small [] [text owner]
+            ]
         Nothing -> [text (Mode.toString mode)] |> cell []
     
 
@@ -162,13 +233,15 @@ make_table state =
         modes = state.modes |> List.filterMap (\m->
             if Mode.intersect state.context m /= 0 then Nothing else
                 Just (Mode.merge state.context m))
-        header class m = Html.th [Attrs.class class, Events.onClick(Do (\s -> {s|context=m}))] [text (Mode.toString m)]
+        header class m = Html.th
+            [Attrs.class class, Events.onClick(Do (\s -> {s|context=m}))]
+            [text (Mode.toString m)]
     in modes
     |> List.indexedMap Tuple.pair
     |> List.map (\(x, m1) ->
         modes |> doif state.scol (\i->0::i)
         |> List.take (x + 1)
-        |> List.map (\m2 -> make_cell state.scores (Mode.merge m1 m2))
+        |> List.map (\m2 -> make_cell state (Mode.merge m1 m2))
         |> doif state.scol     (\i->i++[ header "diag" m1])
         |> doif (not state.scol) ((::) ( header "left" m1 ))
         |> Html.tr [])
