@@ -41,7 +41,7 @@ jobs:
     - name: download data
       run:  "curl -L 'https://ubq323.website/ffbm/scores.cgi?act=all' > ffbm-data.json"
 
-    - name: make wasm
+    - name: make app
       run:  "nix-build makepage.nix --verbose --arg data ./ffbm-data.json -o _site"
     
     - name: "tree :)"
