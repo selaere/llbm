@@ -42,7 +42,10 @@ jobs:
       run:  "curl -L 'https://ubq323.website/ffbm/scores.cgi?act=all' > ffbm-data.json"
 
     - name: make app
-      run:  "nix-build makepage.nix --verbose --arg data ./ffbm-data.json -o _site"
+      run:  "nix-build makepage.nix --verbose --arg data ./ffbm-data.json"
+
+    - name: copy files  # See (https://github.com/actions/deploy-pages/issues/58)
+      run: cp -r -L --no-preserve=mode,ownership result _site
     
     - name: "tree :)"
       run: tree -C _site

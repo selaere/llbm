@@ -17,7 +17,7 @@ outputs = { self, nixpkgs, data}: {
   pkgs.stdenv.mkDerivation {
     name = "llbm";
     src = ./.;
-    buildInputs = with pkgs; [ curl cbqn elmPackages.elm ];
+    buildInputs = with pkgs; [ cbqn elmPackages.elm ];
     elmapp = import nix/app.nix {};
     bqnlibs = builtins.fetchGit { url = "https://github.com/mlochbaum/bqn-libs"; };
     buildPhase = ''
