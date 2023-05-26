@@ -39,7 +39,7 @@ type Model
     | Success State
 
 init : () -> (Model, Cmd Msg)
-init _ = ( Loading, Http.get { url = "../output.txt", expect = Http.expectString GotText } )
+init _ = ( Loading, Http.get { url = "output.txt", expect = Http.expectString GotText } )
 
 type Msg
     = GotText (Result Http.Error String)
