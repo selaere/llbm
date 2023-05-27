@@ -22,8 +22,8 @@ outputs = { self, nixpkgs, data}: {
     bqnlibs = builtins.fetchGit { url = "https://github.com/mlochbaum/bqn-libs"; };
     buildPhase = ''
       ln -s $bqnlibs include
-      cp ${data} ffbm-data.json
-      bqn process.bqn ffbm-data.json
+      echo ${data}
+      bqn process.bqn ${data}
     '';
     installPhase = ''
       mkdir -p $out

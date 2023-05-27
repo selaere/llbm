@@ -22,6 +22,7 @@ main = Browser.element {
     view = view }
 
 type alias State = {
+    last_updated: Time.Posix,
     scores: Dict Mode Score,
     scol: Bool,
     context: Mode,
@@ -49,6 +50,7 @@ update : Msg -> Model -> (Model, Cmd Msg)
 update msg model = case msg of
     GotText result -> case result of
         Ok fullText -> (Success {
+            last_updated = get_last_updated fullText,
             scores = parse fullText,
             scol = False,
             context = 0,
@@ -74,10 +76,20 @@ parse_score ln = case String.split " " ln of
         )) |> Maybe.andThen identity
     _ -> Nothing
 
+get_last_updated : String -> Time.Posix
+get_last_updated = String.lines
+    >> List.head
+    >> Maybe.andThen String.toInt
+    >> Maybe.withDefault 0
+    >> (*) 1000
+    >> Time.millisToPosix
+
 parse : String -> Dict Mode Score
-parse lns = String.lines lns
-    |> List.filterMap (parse_score >> (Maybe.map (\x-> (x.mode, x))))
-    |> Dict.fromList
+parse = String.lines
+    >> List.tail
+    >> Maybe.withDefault []
+    >> List.filterMap (parse_score >> (Maybe.map (\x-> (x.mode, x))))
+    >> Dict.fromList
 
 on_change : (String -> msg) -> Attribute msg
 on_change tagger = Json.Decode.map tagger Events.targetValue
@@ -90,7 +102,9 @@ view model = case model of
     Loading -> text "loading..."
     Success state -> Html.div [] [
         Html.h1 [] [text ",leader lead board man? (llbm)"],
-        Html.p [] [text "click on a score to play. click on a gamemode to see more."],
+        Html.p [] [text (
+            "click on a score to play. click on a gamemode to see more. scores last updated "
+            ++ fmt_date state.last_updated)],
         if state.context == 0 then text "" else
             Html.p [] [
                 Html.text "using modes ",
