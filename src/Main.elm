@@ -67,7 +67,7 @@ type alias Score = {
 
 parse_score : String -> Maybe Score
 parse_score ln = case String.split " " ln of
-    (scorestr :: mode :: datestr :: name) -> 
+    (scorestr :: mode :: datestr :: name) ->
         String.toInt scorestr |> Maybe.map (\score ->
         String.toInt datestr  |> Maybe.map (\date ->
             Score score (Mode.fromString mode) (Time.millisToPosix (date * 1000)) (String.join "," name)
@@ -75,7 +75,7 @@ parse_score ln = case String.split " " ln of
     _ -> Nothing
 
 parse : String -> Dict Mode Score
-parse lns = String.lines lns 
+parse lns = String.lines lns
     |> List.filterMap (parse_score >> (Maybe.map (\x-> (x.mode, x))))
     |> Dict.fromList
 
@@ -90,7 +90,8 @@ view model = case model of
     Loading -> text "loading..."
     Success state -> Html.div [] [
         Html.h1 [] [text ",leader lead board man? (llbm)"],
-        if state.context == 0 then text "" else 
+        Html.p [] [text "click on a score to play. click on a gamemode to see more."],
+        if state.context == 0 then text "" else
             Html.p [] [
                 Html.text "using modes ",
                 Html.b [] [text (Mode.toString state.context)],
@@ -98,8 +99,7 @@ view model = case model of
                 Html.button [Events.onClick (Do (\s-> {s|context=0}))] [text "reset"]
             ],
         make_table state,
-        menu state
-        ]
+        menu state ]
 
 on_radio_button : Coloring -> Attribute Msg
 on_radio_button coloring = Events.onCheck (\bool -> Do (if bool then \m->{m|coloring = coloring} else identity))
@@ -181,7 +181,7 @@ fromMonth month = case month of
 
 fmt_date : Time.Posix -> String
 fmt_date date =
-    let 
+    let
         padzero digits = String.fromInt >> String.padLeft digits '0'
         t thing = (thing Time.utc date)
         ts digits = t >> padzero digits
@@ -195,13 +195,13 @@ fmt_date date =
 
 player_color : Coloring -> Score -> String
 player_color coloring score =
-    let 
+    let
         {hue, lgt} = case coloring of
             ByName seed ->
                 let hash = hashString seed score.owner in
                 { hue = hash |> modBy 360
                 , lgt = ((hash // 360) |> modBy 45) + 40}
-            ByDate -> 
+            ByDate ->
                 { hue = (Time.posixToMillis score.date // 1000 - 1577836800) // 500000 |> max -20
                 , lgt = 60 }
             ByScore ->
@@ -211,13 +211,13 @@ player_color coloring score =
     in "hsl("++(String.fromInt hue)++",60%,"++(String.fromInt lgt)++"%"
 
 make_cell : State -> Mode -> Html msg
-make_cell state mode = 
+make_cell state mode =
     let cell attrs = Html.a [Attrs.href ("https://ubq323.website/ffbm#" ++ Mode.toString mode)] >> singleton >> Html.td attrs in
     case Dict.get mode state.scores of
-        Just ({score, owner, date} as sco) -> 
+        Just ({score, owner, date} as sco) ->
             cell [
                 Attrs.style "background-color" (player_color state.coloring sco),
-                Attrs.title ( 
+                Attrs.title (
                     owner ++ " " ++ (String.fromInt score) ++ " in " ++ (Mode.toString mode) ++ " at " ++ (fmt_date date))
             ] [
                 text (String.fromInt score),
@@ -226,14 +226,14 @@ make_cell state mode =
                 Html.small [] [text owner]
             ]
         Nothing -> [text (Mode.toString mode)] |> cell []
-    
+
 
 doif : Bool -> (a -> a) -> (a -> a)
 doif bl fun = if bl then fun else identity
 
 make_table : State -> Html Msg
 make_table state =
-    let 
+    let
         modes = state.modes |> List.filterMap (\m->
             if Mode.intersect state.context m /= 0 then Nothing else
                 Just (Mode.merge state.context m))
