@@ -27,6 +27,8 @@ type alias State = {
     scol: Bool,
     context: Mode,
     coloring: Coloring,
+    highlight: Bool,
+    hovered: Maybe Score,
     modes: List Mode }
 
 type Coloring
@@ -55,6 +57,8 @@ update msg model = case msg of
             scol = False,
             context = 0,
             coloring = ByName 3054,
+            highlight = False,
+            hovered = Nothing,
             modes = Mode.modes }, Cmd.none)
         Err _ -> (Failure, Cmd.none)
     Do thing -> case model of
@@ -125,6 +129,12 @@ menu state = Html.main_ [] [
             type_ "checkbox",
             Events.onCheck ( \bool -> Do (\s-> {s | scol=bool}))] [],
         text "one-letter modes on single column"],
+    Html.br [] [],
+    Html.label [] [
+        Html.input [
+            type_ "checkbox",
+            Events.onCheck ( \bool -> Do (\s-> {s | highlight=bool}))] [],
+        text "highlight other scores from the same person when hovering over a score"],
     Html.br [] [],
     Html.label [] [
         text "modes: ",
@@ -214,7 +224,7 @@ player_color coloring score =
             ByName seed ->
                 let hash = hashString seed score.owner in
                 { hue = hash |> modBy 360
-                , lgt = ((hash // 360) |> modBy 45) + 40}
+                , lgt = hash // 360 |> modBy 45 |> (+) 40}
             ByDate ->
                 { hue = (Time.posixToMillis score.date // 1000 - 1577836800) // 500000 |> max -20
                 , lgt = 60 }
@@ -224,16 +234,23 @@ player_color coloring score =
                     |> logBase (1002 ^ (1/45)) |> (+) 40 |> floor }
     in "hsl("++(String.fromInt hue)++",60%,"++(String.fromInt lgt)++"%"
 
-make_cell : State -> Mode -> Html msg
+make_cell : State -> Mode -> Html Msg
 make_cell state mode =
     let cell attrs = Html.a [Attrs.href ("https://ubq323.website/ffbm#" ++ Mode.toString mode)] >> singleton >> Html.td attrs in
     case Dict.get mode state.scores of
         Just ({score, owner, date} as sco) ->
-            cell [
+            cell 
+            ([
+                Events.onMouseEnter ( Do (\s -> {s | hovered=Just sco})),
+                Events.onMouseLeave ( Do (\s -> {s | hovered=Nothing})),
                 Attrs.style "background-color" (player_color state.coloring sco),
                 Attrs.title (
                     owner ++ " " ++ (String.fromInt score) ++ " in " ++ (Mode.toString mode) ++ " at " ++ (fmt_date date))
-            ] [
+            ] |> doif 
+                (state.highlight && (state.hovered |> Maybe.map (.owner >> (==) owner) |> Maybe.withDefault False))
+                ((::) (Attrs.class "hl"))
+            )
+            [
                 text (String.fromInt score),
                 Html.small [] [text (" " ++ Mode.toString mode)],
                 Html.br [] [],
