@@ -4,7 +4,7 @@ import Array exposing (..)
 import Dict exposing (..)
 
 mode_chars : List Char
-mode_chars = String.toList "bwuipscmhaedtnvklgjy"
+mode_chars = String.toList "bwuipscmhaedtnvklgjyrf"
 
 modes_dict : Dict Char Mode
 modes_dict = mode_chars |> List.indexedMap (\i->\x-> (x, 2^i)) |> Dict.fromList
