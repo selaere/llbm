@@ -1,4 +1,14 @@
 /elm-stuff
-/pkg/*
-/include/*
-/result
+/include/
+/.vscode/
+/bower_components/
+/node_modules/
+/.pulp-cache/
+/output/
+/generated-docs/
+/.psc-package/
+/.psc*
+/.purs*
+/.psa*
+/.spago
+/main.js
