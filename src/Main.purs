@@ -9,18 +9,18 @@ import Control.Alternative (guard)
 import Control.Apply (lift2)
 import Control.Monad.Error.Class (liftEither)
 import DOM.HTML.Indexed as DOM
-import Data.Array (catMaybes, unsnoc, elemIndex, length, mapWithIndex, tail, take, zipWith, (..))
+import Data.Array (catMaybes, elemIndex, length, mapMaybe, mapWithIndex, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, instant, toDateTime)
-import Data.Either (either, hush)
+import Data.Either (either, hush, note)
 import Data.Foldable (foldl, sum)
 import Data.Formatter.DateTime (formatDateTime)
 import Data.Int as Int
 import Data.Int.Bits (shl, (.&.), (.|.))
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), fromJust, maybe)
 import Data.Monoid as M
 import Data.Monoid.Endo (Endo(..))
 import Data.Newtype (under)
@@ -41,6 +41,7 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.VDom.Driver (runUI)
 import Murmur3 (hash)
+import Partial.Unsafe (unsafePartial)
 
 
 infixr 9 compose as ∘
@@ -87,33 +88,38 @@ type Score =
 score ∷ Int → Mode → Instant → String → Score
 score = {score: _, mode: _, date: _, owner: _}
 
---derive instance Eq Generic _
+strSecs ∷ String → Maybe Instant
+strSecs = Number.fromString >=> instant ∘ Milliseconds ∘ (*) 1000.0
 
 parseLine ∷ String → Maybe Score
 parseLine a = join (match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
   [s, m, d, o] -> score <$> (s >>= Int.fromString) 
                         <*> (m <#> modeFromString)
-                        <*> (d >>= toInstant)
+                        <*> (d >>= strSecs)
                         <*> o
   _ -> Nothing
   where 
     reg = hush $ regex "^([^ ]*) ([^ ]*) ([^ ]*) (.*)$" mempty
-    toInstant = Number.fromString >=> instant ∘ Milliseconds ∘ (*) 1000.0
 
-bee ∷ ∀f a b. Applicative f => (a -> b) -> a -> f b
-bee = (pure ∘ _)
+tEqualsZero ∷ Instant
+tEqualsZero = unsafePartial (fromJust $ instant $ Milliseconds 0.0)
 
-parseFile ∷ String → Map Mode Score
-parseFile = 
-  Map.fromFoldable ∘ lift2 Tuple _.mode identity <∘>
-  catMaybes ∘ parseLine <∘> split (Pattern "\n")
+type File = { scores ∷ Map Mode (Array Score), lastUpdated ∷ Instant }
+
+parseFile ∷ String → Maybe File
+parseFile file = do
+  {head, tail} ← uncons $ split (Pattern "\n") file
+  lastUpdated ← strSecs head
+  let scores = Map.fromFoldableWith append $ lift2 Tuple _.mode pure <$> mapMaybe parseLine tail
+  pure {scores, lastUpdated}
 
 main ∷ Effect Unit
 main = HA.runHalogenAff do
-  datas ← AJW.get string "output.txt"
-        >>= liftEither ∘ lmap (error ∘ AJ.printError)
+  file ← AJW.get string "hist.txt"
+       >>= liftEither ∘ lmap (error ∘ AJ.printError)
+  datas ← liftEither $ note (error "file failed parsing") $ parseFile file.body
   body ← HA.awaitBody
-  runUI component datas.body body
+  runUI component datas body
 
 applyWhen ∷ ∀a. Boolean → (a → a) → a → a
 applyWhen = under Endo ∘ M.guard
@@ -149,16 +155,32 @@ makeCell mode (Just {score, owner, date}) =
     , HH.small_ [HH.text owner]
     ]
 
-displayScore ∷ ∀w i. Map Mode Score → Mode → HH.HTML w i
-displayScore scores mode = makeCell mode (Map.lookup mode scores)
+search ∷ ∀i. (i → Boolean) → Array i → Int
+search cmp arr = search_ cmp arr 0 (length arr)
+  where 
+    search_ cmp arr lo hi
+      | lo >= hi  = lo
+      | otherwise =
+        let mid = (lo + hi) `div` 2 in
+        case cmp <$> (arr !! mid) of
+          Just true  → search_ cmp arr (mid+1) hi
+          Just false → search_ cmp arr lo mid
+          Nothing    → hi
 
-data Action = Increment | ToggleScol | ToggleShowEmpty
+displayScore ∷ ∀w i. Map Mode (Array Score) → Instant → Mode → HH.HTML w i
+displayScore scores time mode = makeCell mode do
+  arr ← Map.lookup mode scores
+  arr !! search (\y→ y.date > time) arr
+
+data Action = Increment | ToggleScol | ToggleShowEmpty | ChangeTime String
 
 type State =
-  { scores ∷ Map Mode Score
+  { scores ∷ Map Mode (Array Score)
+  , lastUpdated ∷ Instant
   , modes  ∷ Array Mode
   , scol   ∷ Boolean
   , showEmpty ∷ Boolean
+  , time   ∷ Instant
   }
 
 rotate ∷ ∀a. Array a → Array a
@@ -166,31 +188,34 @@ rotate arr = case unsnoc arr of
   Just { init, last } → [last] <> init
   Nothing -> []
 
-initialState ∷ String → State
-initialState a = 
-  { scores: parseFile a
-  , modes: allModes
-  , scol: false
+initialState ∷ File → State
+initialState {scores,lastUpdated} = 
+  { scores
+  , lastUpdated
+  , time:      lastUpdated
+  , modes:     allModes
+  , scol:      false
   , showEmpty: true
   }
 
 handleAction ∷ ∀o m. MonadEffect m ⇒ Action → H.HalogenM State Action () o m Unit
 handleAction = case _ of
   Increment → (H.get >>= log ∘ show) $> unit
-    --H.get >>= H.liftEffect (pure log) ∘ show >>= \_→ pure unit --H.modify_ (_ + 2)
   ToggleScol      → H.modify_ (\x→ x {scol      = not x.scol     })
   ToggleShowEmpty → H.modify_ (\x→ x {showEmpty = not x.showEmpty})
+  ChangeTime s    → maybe (pure unit) (\y→ H.modify_ _ {time = y}) $ strSecs s
 
 render ∷ ∀m. State → H.ComponentHTML Action () m
 render state = 
   HH.div_
-    [ HH.table_ $ (HH.tr_ ∘ map (displayScore state.scores)) <$> (table state)
+    [ HH.table_ $ (HH.tr_ ∘ map (displayScore state.scores state.time)) <$> (table state)
     , HH.button [HE.onClick \_→Increment] [HH.text "bee"]
     , HH.input [HP.type_ HP.InputCheckbox, HE.onClick \_→ToggleScol]
     , HH.input [HP.type_ HP.InputCheckbox, HE.onClick \_→ToggleShowEmpty]
+    , HH.input [HP.type_ HP.InputText, HE.onValueInput ChangeTime]
     ]
 
-component ∷ ∀query o m. MonadEffect m ⇒ H.Component query String o m
+component ∷ ∀query o m. MonadEffect m ⇒ H.Component query File o m
 component = H.mkComponent
   { initialState
   , render
