@@ -12,10 +12,11 @@ import DOM.HTML.Indexed as DOM
 import Data.Array (catMaybes, cons, elemIndex, length, mapMaybe, mapWithIndex, snoc, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
-import Data.DateTime.Instant (Instant, instant, toDateTime)
-import Data.Either (either, hush, note)
+import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
+import Data.Either (fromRight, hush, note)
 import Data.Foldable (foldl, sum)
-import Data.Formatter.DateTime (formatDateTime)
+import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
+import Data.Function (on)
 import Data.Int as Int
 import Data.Int.Bits (shl, (.&.), (.|.))
 import Data.Lens (Prism, _2, prism, (%~))
@@ -25,9 +26,10 @@ import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust, maybe)
 import Data.Monoid as M
 import Data.Monoid.Endo (Endo(..))
-import Data.Newtype (under)
+import Data.Newtype (under, unwrap)
 import Data.Number as Number
-import Data.String (CodePoint, Pattern(..), fromCodePointArray, toCodePointArray)
+import Data.String (CodePoint, Pattern(..), fromCodePointArray, joinWith, toCodePointArray)
+import Data.String as S
 import Data.String.Common (split)
 import Data.String.Regex (regex, match)
 import Data.Time.Duration (Milliseconds(..))
@@ -92,7 +94,7 @@ score ∷ Int → Mode → Instant → String → Score
 score = {score: _, mode: _, date: _, owner: _}
 
 strSecs ∷ String → Maybe Instant
-strSecs = Number.fromString >=> instant ∘ Milliseconds ∘ (*) 1000.0
+strSecs = toInstant <∘> Number.fromString
 
 parseLine ∷ String → Maybe Score
 parseLine a = join (match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
@@ -103,9 +105,6 @@ parseLine a = join (match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
   _ -> Nothing
   where 
     reg = hush $ regex "^([^ ]*) ([^ ]*) ([^ ]*) (.*)$" mempty
-
-tEqualsZero ∷ Instant
-tEqualsZero = unsafePartial (fromJust $ instant $ Milliseconds 0.0)
 
 type File = { scores ∷ Map Mode (Array Score), lastUpdated ∷ Instant }
 
@@ -150,8 +149,7 @@ makeCell mode Nothing = makeCell' mode [] [HH.text $ show mode]
 makeCell mode (Just {score, owner, date}) =
   makeCell' mode
     [ HP.style $ "background-color:" <> color owner 
-    , HP.title $ owner<>" "<> show score <>" in "<> show mode <>" at "<> 
-      (either identity identity $ formatDateTime "YYYY-MM-DD" $ toDateTime date)]
+    , HP.title $ owner<>" "<> show score <>" in "<> show mode <>" at "<> formatTime date]
     [ HH.text $ show score
     , HH.small_ [HH.text $ " " <> show mode]
     , HH.br_
@@ -175,7 +173,14 @@ displayScore scores time mode = makeCell mode do
   arr ← Map.lookup mode scores
   arr !! search (\y→ y.date > time) arr
 
-data Action = Increment | ToggleScol | ToggleShowEmpty | ChangeTime String
+data Action =
+    Increment
+  | ToggleScol
+  | ToggleShowEmpty
+  | ChangeTime String
+  | ChangeTimeBy Number
+  | ChangeModes String
+  | ResetModes
 
 type State =
   { scores ∷ Map Mode (Array Score)
@@ -201,12 +206,25 @@ initialState {scores,lastUpdated} =
   , showEmpty: true
   }
 
+formatTime ∷ Instant → String
+formatTime = fromRight "1970-01-01T00:00:00" ∘ formatDateTime "YYYY-MM-DDTHH:mm:ss" ∘ toDateTime
+
+toInstant ∷ Number → Instant
+toInstant = unsafePartial $
+  fromJust ∘ instant ∘ on clamp unInstant bottom top ∘ Milliseconds ∘ (*) 1000.0
+
 handleAction ∷ ∀o m. MonadEffect m ⇒ Action → H.HalogenM State Action () o m Unit
 handleAction = case _ of
   Increment → (H.get >>= log ∘ show) $> unit
   ToggleScol      → H.modify_ (\x→ x {scol      = not x.scol     })
   ToggleShowEmpty → H.modify_ (\x→ x {showEmpty = not x.showEmpty})
-  ChangeTime s    → maybe (pure unit) (\y→ H.modify_ _ {time = y}) $ strSecs s
+  ChangeModes s   → H.modify_ _ {modes = modeFromString <$> split (Pattern " ") s}
+  ResetModes      → H.modify_ _ {modes = allModes}
+  ChangeTime s    → applyWhen (S.length s <= 16) (_<>":00") s 
+                    # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
+                    # hush <#> fromDateTime 
+                    # maybe (pure unit) (\y→ H.modify_ _ {time = y})
+  ChangeTimeBy n  → H.modify_ (\x → x {time = toInstant $ n + unwrap (unInstant x.time) / 1000.0 })
 
 _cons ∷ ∀a b. Prism (Array a) (Array b) (a /\ Array a) (b /\ Array b)
 _cons = prism (\(a/\b)→[a]<>b) $ note [] ∘ (\{head,tail}→head/\tail) <∘> uncons
@@ -214,7 +232,8 @@ _cons = prism (\(a/\b)→[a]<>b) $ note [] ∘ (\{head,tail}→head/\tail) <∘>
 addHeaders ∷ ∀i w. State → Array (Array (HH.HTML i w)) → Array (Array (HH.HTML i w))
 addHeaders {scol, showEmpty, modes} arr =
   if scol then arr # sel %~ zipWith (flip snoc ∘ head "diag") modes
-          else arr # sel %~ zipWith (cons      ∘ head "left") modes # ix 0 %~ cons (HH.th_ [])
+          else arr # sel %~ zipWith (cons      ∘ head "left") modes
+                 # applyWhen showEmpty (ix 0 %~ cons (HH.th_ []))
   where sel = if showEmpty then _cons∘_2 else identity
         head c x = HH.th [HP.class_ $ H.ClassName c] [HH.text $ show x] 
 
@@ -227,9 +246,44 @@ render state =
   HH.div_
     [ renderTable state
     , HH.button [HE.onClick \_→Increment] [HH.text "bee"]
-    , HH.input [HP.type_ HP.InputCheckbox, HE.onClick \_→ToggleScol]
-    , HH.input [HP.type_ HP.InputCheckbox, HE.onClick \_→ToggleShowEmpty]
-    , HH.input [HP.type_ HP.InputText, HE.onValueInput ChangeTime]
+    , HH.br_
+    , HH.label_
+      [ HH.input [HP.type_ HP.InputCheckbox, HE.onClick \_→ToggleScol]
+      , HH.text "single column one line"
+      ]
+    , HH.br_
+    , HH.label_
+      [ HH.input [HP.type_ HP.InputCheckbox, HE.onClick \_→ToggleShowEmpty]
+      , HH.text "show empty score (ε)"
+      ]
+    , HH.br_
+    , HH.label_
+      [ HH.text "modes: "
+      , HH.input 
+        [ HP.type_ HP.InputText
+        , HP.class_ (H.ClassName "modes")
+        , HP.value $ joinWith " " $ modeToString <$> state.modes
+        , HE.onValueChange ChangeModes
+        ]
+      ]
+    , HH.button [HE.onClick \_→ResetModes] [HH.text "reset"]
+    , HH.br_
+
+    , HH.button [HE.onClick \_→ChangeTimeBy $ -365.0*86400.0 ] [ HH.text "-y" ]
+    , HH.button [HE.onClick \_→ChangeTimeBy $  -30.0*86400.0 ] [ HH.text "-30d" ]
+    , HH.button [HE.onClick \_→ChangeTimeBy $       -86400.0 ] [ HH.text "-d" ]
+    , HH.button [HE.onClick \_→ChangeTimeBy $        -3600.0 ] [ HH.text "-h" ]
+    , HH.input 
+      [ HP.type_ HP.InputDatetimeLocal
+      , HP.value $ formatTime state.time
+      , HE.onValueChange ChangeTime
+      , HP.attr (H.AttrName "step") "1"
+      , HP.attr (H.AttrName "max") $ formatTime state.lastUpdated
+      ]
+    , HH.button [HE.onClick \_→ChangeTimeBy $         3600.0 ] [ HH.text "+h" ]
+    , HH.button [HE.onClick \_→ChangeTimeBy $        86400.0 ] [ HH.text "+d" ]
+    , HH.button [HE.onClick \_→ChangeTimeBy $   30.0*86400.0 ] [ HH.text "+30d" ]
+    , HH.button [HE.onClick \_→ChangeTimeBy $  365.0*86400.0 ] [ HH.text "+y" ]
     ]
 
 component ∷ ∀query o m. MonadEffect m ⇒ H.Component query File o m
