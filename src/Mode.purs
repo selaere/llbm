@@ -5,10 +5,11 @@ import Prelude
 import Control.Alternative (guard)
 import Data.Array (catMaybes, elemIndex, foldl, length, mapWithIndex, (..))
 import Data.Foldable (sum)
+import Data.Hashable (class Hashable)
 import Data.Int.Bits (shl, (.&.), (.^.), (.|.))
 import Data.Newtype (class Newtype, unwrap)
 import Data.String (CodePoint, fromCodePointArray, toCodePointArray)
-import Main.Common ((<∘>), (∘))
+import Main.Common ((<∘>), (∘), (≢))
 
 
 newtype Mode = Mode Int
@@ -25,6 +26,7 @@ instance Bounded Mode where
   top = fromString $ fromCodePointArray modeChars
 instance Semigroup Mode where append = merge
 instance Monoid Mode where mempty = ε
+instance Hashable Mode where hash (Mode n) = n
 
 modeChars ∷ Array CodePoint
 modeChars = toCodePointArray "bwuipscmhaedtnvklgjyrf"
@@ -35,7 +37,7 @@ all = Mode <$> shl 1 <$> 0 .. (length modeChars - 1)
 toString ∷ Mode → String
 toString (Mode 0   ) = "ε"
 toString (Mode mode) = modeChars
-  # mapWithIndex (\i x→ x <$ guard (mode .&. (shl 1 i) /= 0))
+  # mapWithIndex (\i x→ x <$ guard (mode .&. (shl 1 i) ≢ 0))
   # catMaybes # fromCodePointArray
 
 fromString ∷ String → Mode

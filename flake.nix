@@ -17,7 +17,7 @@
           ps = purs-nix.purs {
             dependencies = [
               "console" "effect" "prelude" "halogen" "bifunctors" "exceptions" "ursi.murmur3"
-              "affjax" "affjax-web" "strings" "partial" "ordered-collections" "formatters"
+              "affjax" "affjax-web" "strings" "partial" "unordered-collections" "formatters"
               "profunctor-lenses"];
             dir = ./.;
           };

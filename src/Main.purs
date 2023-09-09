@@ -5,19 +5,18 @@ import Prelude
 import Affjax as AJ
 import Affjax.ResponseFormat (string)
 import Affjax.Web as AJW
-import Control.Apply (lift2)
 import Control.Monad.Error.Class (liftEither)
 import DOM.HTML.Indexed as DOM
-import Data.Array (cons, filter, length, mapMaybe, snoc, tail, take, uncons, unsnoc, zipWith, (!!), (..))
+import Data.Array (cons, filter, foldl, length, mapMaybe, snoc, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
 import Data.Either (fromRight, hush, note)
 import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
 import Data.Function (on)
+import Data.HashMap (HashMap)
+import Data.HashMap as HM
 import Data.Int as Int
-import Data.Map (Map)
-import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust, maybe)
 import Data.Newtype (unwrap)
 import Data.Number as Number
@@ -26,7 +25,6 @@ import Data.String as S
 import Data.String.Common (split)
 import Data.String.Regex (regex, match)
 import Data.Time.Duration (Milliseconds(..))
-import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Class (class MonadEffect)
 import Effect.Exception (error)
@@ -61,13 +59,13 @@ parseLine a = join (match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
   where
     reg = hush $ regex "^([^ ]*) ([^ ]*) ([^ ]*) (.*)$" mempty
 
-type File = { scores ∷ Map Mode (Array Score), lastUpdated ∷ Instant }
+type File = { scores ∷ HashMap Mode (Array Score), lastUpdated ∷ Instant }
 
 parseFile ∷ String → Maybe File
 parseFile file = do
   {head, tail} ← uncons $ split (Pattern "\n") file
   lastUpdated ← toInstant <$> Number.fromString head
-  let scores = Map.fromFoldableWith append $ lift2 Tuple _.mode pure <$> mapMaybe parseLine tail
+  let scores = foldl (\m i→HM.insertWith (flip (⋄)) i.mode [i] m) mempty $ mapMaybe parseLine tail
   pure {scores, lastUpdated}
 
 main ∷ Effect Unit
@@ -98,15 +96,14 @@ makeCell' mode a = HH.td a ∘ pure ∘ HH.a [HP.href $ "https://ubq323.website/
 
 makeCell ∷ ∀w i. Mode → Maybe Score → HH.HTML w i
 makeCell mode Nothing = makeCell' mode [] [HH.text $ show mode]
-makeCell mode (Just {score, owner, date}) =
-  makeCell' mode
-    [ HP.style $ "background-color:" ⋄ color owner
-    , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date]
-    [ HH.text $ show score
-    , HH.small_ [HH.text $ " " ⋄ show mode]
-    , HH.br_
-    , HH.small_ [HH.text owner]
-    ]
+makeCell mode (Just {score, owner, date}) = makeCell' mode
+  [ HP.style $ "background-color:" ⋄ color owner
+  , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date]
+  [ HH.text $ show score
+  , HH.small_ [HH.text $ " " ⋄ show mode]
+  , HH.br_
+  , HH.small_ [HH.text owner]
+  ]
 
 search ∷ ∀i. (i → Boolean) → Array i → Int
 search cmp arr = search_ cmp arr 0 (length arr)
@@ -120,9 +117,9 @@ search cmp arr = search_ cmp arr 0 (length arr)
           Just false → search_ cmp arr lo mid
           Nothing    → hi
 
-displayScore ∷ ∀w i. Map Mode (Array Score) → Instant → Mode → HH.HTML w i
+displayScore ∷ ∀w i. HashMap Mode (Array Score) → Instant → Mode → HH.HTML w i
 displayScore scores time mode = makeCell mode do
-  arr ← Map.lookup mode scores
+  arr ← HM.lookup mode scores
   arr !! search (\y→ y.date > time) arr
 
 data Action =
@@ -137,7 +134,7 @@ data Action =
   | ResetContext
 
 type State =
-  { scores ∷ Map Mode (Array Score)
+  { scores ∷ HashMap Mode (Array Score)
   , lastUpdated ∷ Instant
   , context ∷ Mode
   , modes  ∷ Array Mode
@@ -252,15 +249,12 @@ render state =
       ]
     , HH.button [HE.onClick \_→ResetTime] [HH.text "skip forward"]
     , HH.br_
-    , HH.button [HE.onClick \_→ChangeTimeBy $ -365.0*86400.0 ] [ HH.text "-y" ]
-    , HH.button [HE.onClick \_→ChangeTimeBy $  -30.0*86400.0 ] [ HH.text "-30d" ]
-    , HH.button [HE.onClick \_→ChangeTimeBy $       -86400.0 ] [ HH.text "-d" ]
-    , HH.button [HE.onClick \_→ChangeTimeBy $        -3600.0 ] [ HH.text "-h" ]
-    , HH.button [HE.onClick \_→ChangeTimeBy $         3600.0 ] [ HH.text "+h" ]
-    , HH.button [HE.onClick \_→ChangeTimeBy $        86400.0 ] [ HH.text "+d" ]
-    , HH.button [HE.onClick \_→ChangeTimeBy $   30.0*86400.0 ] [ HH.text "+30d" ]
-    , HH.button [HE.onClick \_→ChangeTimeBy $  365.0*86400.0 ] [ HH.text "+y" ]
+    , skip (-365*86400) "-y" , skip ( -30*86400) "-30d", skip (  -7*86400) "-7d"
+    , skip (    -86400) "-d" , skip (     -3600) "-h"
+    , skip (      3600) "+h" , skip (     86400) "+d"
+    , skip (   7*86400) "+7d", skip (  30*86400) "+30d", skip ( 365*86400) "+y"
     ]]
+  where skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
 
 component ∷ ∀query o m. MonadEffect m ⇒ H.Component query File o m
 component = H.mkComponent
