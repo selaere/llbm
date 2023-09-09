@@ -9,7 +9,7 @@ import Control.Alternative (guard)
 import Control.Apply (lift2)
 import Control.Monad.Error.Class (liftEither)
 import DOM.HTML.Indexed as DOM
-import Data.Array (catMaybes, cons, elemIndex, length, mapMaybe, mapWithIndex, snoc, tail, take, uncons, unsnoc, zipWith, (!!), (..))
+import Data.Array (catMaybes, cons, elemIndex, filter, length, mapMaybe, mapWithIndex, snoc, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
@@ -18,7 +18,7 @@ import Data.Foldable (foldl, sum)
 import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
 import Data.Function (on)
 import Data.Int as Int
-import Data.Int.Bits (shl, (.&.), (.|.))
+import Data.Int.Bits (shl, (.&.), (.^.), (.|.))
 import Data.Lens (Prism, _2, prism, (%~))
 import Data.Lens.Index (ix)
 import Data.Map (Map)
@@ -26,7 +26,7 @@ import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust, maybe)
 import Data.Monoid as M
 import Data.Monoid.Endo (Endo(..))
-import Data.Newtype (under, unwrap)
+import Data.Newtype (class Newtype, under, unwrap)
 import Data.Number as Number
 import Data.String (CodePoint, Pattern(..), fromCodePointArray, joinWith, toCodePointArray)
 import Data.String as S
@@ -37,7 +37,6 @@ import Data.Tuple (Tuple(..))
 import Data.Tuple.Nested (type (/\), (/\))
 import Effect (Effect)
 import Effect.Class (class MonadEffect)
-import Effect.Class.Console (log)
 import Effect.Exception (error)
 import Halogen as H
 import Halogen.Aff as HA
@@ -57,6 +56,7 @@ infixr 9 mapCompose as <∘>
 
 newtype Mode = Mode Int
 instance Show Mode where show = modeToString
+derive instance Newtype Mode _
 derive instance Eq Mode
 derive instance Ord Mode
 instance Bounded Mode where
@@ -84,6 +84,13 @@ modeFromString =
 modeMerge ∷ Mode → Mode → Mode
 modeMerge (Mode x) (Mode y) = Mode $ x .|. y
 
+modeIntersect ∷ Mode → Mode → Mode
+modeIntersect (Mode x) (Mode y) = Mode $ x .&. y
+infixr 6 modeIntersect as ∩
+
+modeSubtract ∷ Mode → Mode → Mode
+modeSubtract (Mode x) (Mode y) = Mode $ x .&. (y .^. unwrap (top∷Mode))
+
 type Score =
   { score ∷ Int
   , mode  ∷ Mode
@@ -98,12 +105,12 @@ strSecs = toInstant <∘> Number.fromString
 
 parseLine ∷ String → Maybe Score
 parseLine a = join (match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
-  [s, m, d, o] -> score <$> (s >>= Int.fromString) 
+  [s, m, d, o] -> score <$> (s >>= Int.fromString)
                         <*> (m <#> modeFromString)
                         <*> (d >>= strSecs)
                         <*> o
   _ -> Nothing
-  where 
+  where
     reg = hush $ regex "^([^ ]*) ([^ ]*) ([^ ]*) (.*)$" mempty
 
 type File = { scores ∷ Map Mode (Array Score), lastUpdated ∷ Instant }
@@ -127,12 +134,12 @@ applyWhen ∷ ∀a. Boolean → (a → a) → a → a
 applyWhen = under Endo ∘ M.guard
 
 table ∷ State → Array (Array Mode)
-table { modes, scol, showEmpty } =
+table { modes, scol, showEmpty, context } =
   1 .. (length modes)
   <#> take `flip` modes
   <#> applyWhen scol rotate
   # zipWith (map ∘ append) modes
-  # applyWhen showEmpty (append [[mempty]])
+  # applyWhen showEmpty (append [[context]])
 
 color ∷ String → String
 color "☭🐝" = "rgb(198,234,169)" -- temporary (elm Murmur3 and ursi/purescript-murmur3 treat unicode differently)
@@ -148,7 +155,7 @@ makeCell ∷ ∀w i. Mode → Maybe Score → HH.HTML w i
 makeCell mode Nothing = makeCell' mode [] [HH.text $ show mode]
 makeCell mode (Just {score, owner, date}) =
   makeCell' mode
-    [ HP.style $ "background-color:" <> color owner 
+    [ HP.style $ "background-color:" <> color owner
     , HP.title $ owner<>" "<> show score <>" in "<> show mode <>" at "<> formatTime date]
     [ HH.text $ show score
     , HH.small_ [HH.text $ " " <> show mode]
@@ -158,7 +165,7 @@ makeCell mode (Just {score, owner, date}) =
 
 search ∷ ∀i. (i → Boolean) → Array i → Int
 search cmp arr = search_ cmp arr 0 (length arr)
-  where 
+  where
     search_ cmp arr lo hi
       | lo >= hi  = lo
       | otherwise =
@@ -174,17 +181,19 @@ displayScore scores time mode = makeCell mode do
   arr !! search (\y→ y.date > time) arr
 
 data Action =
-    Increment
-  | ToggleScol
+    ToggleScol
   | ToggleShowEmpty
   | ChangeTime String
   | ChangeTimeBy Number
   | ChangeModes String
   | ResetModes
+  | AddContext Mode
+  | ResetContext
 
 type State =
   { scores ∷ Map Mode (Array Score)
   , lastUpdated ∷ Instant
+  , context ∷ Mode
   , modes  ∷ Array Mode
   , scol   ∷ Boolean
   , showEmpty ∷ Boolean
@@ -197,9 +206,10 @@ rotate arr = case unsnoc arr of
   Nothing -> []
 
 initialState ∷ File → State
-initialState {scores,lastUpdated} = 
+initialState {scores,lastUpdated} =
   { scores
   , lastUpdated
+  , context:   Mode 0
   , time:      lastUpdated
   , modes:     allModes
   , scol:      false
@@ -215,51 +225,66 @@ toInstant = unsafePartial $
 
 handleAction ∷ ∀o m. MonadEffect m ⇒ Action → H.HalogenM State Action () o m Unit
 handleAction = case _ of
-  Increment → (H.get >>= log ∘ show) $> unit
-  ToggleScol      → H.modify_ (\x→ x {scol      = not x.scol     })
-  ToggleShowEmpty → H.modify_ (\x→ x {showEmpty = not x.showEmpty})
+  ToggleScol      → H.modify_ \x→ x {scol      = not x.scol     }
+  ToggleShowEmpty → H.modify_ \x→ x {showEmpty = not x.showEmpty}
   ChangeModes s   → H.modify_ _ {modes = modeFromString <$> split (Pattern " ") s}
   ResetModes      → H.modify_ _ {modes = allModes}
-  ChangeTime s    → applyWhen (S.length s <= 16) (_<>":00") s 
+  ChangeTime s    → applyWhen (S.length s <= 16) (_<>":00") s
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
-                    # hush <#> fromDateTime 
+                    # hush <#> fromDateTime
                     # maybe (pure unit) (\y→ H.modify_ _ {time = y})
-  ChangeTimeBy n  → H.modify_ (\x → x {time = toInstant $ n + unwrap (unInstant x.time) / 1000.0 })
+  ChangeTimeBy n  → H.modify_ \x→ x {time = toInstant $ n + unwrap (unInstant x.time) / 1000.0 }
+  AddContext m    → H.modify_ \x→ x {context = x.context <> m}
+  ResetContext    → H.modify_ _ {context = Mode 0}
 
 _cons ∷ ∀a b. Prism (Array a) (Array b) (a /\ Array a) (b /\ Array b)
 _cons = prism (\(a/\b)→[a]<>b) $ note [] ∘ (\{head,tail}→head/\tail) <∘> uncons
 
-addHeaders ∷ ∀i w. State → Array (Array (HH.HTML i w)) → Array (Array (HH.HTML i w))
+addHeaders ∷ ∀m. State → Array (Array (H.ComponentHTML Action () m)) → Array (Array (H.ComponentHTML Action () m))
 addHeaders {scol, showEmpty, modes} arr =
   if scol then arr # sel %~ zipWith (flip snoc ∘ head "diag") modes
           else arr # sel %~ zipWith (cons      ∘ head "left") modes
-                 # applyWhen showEmpty (ix 0 %~ cons (HH.th_ []))
+                   # applyWhen showEmpty (ix 0 %~ cons (HH.th_ []))
   where sel = if showEmpty then _cons∘_2 else identity
-        head c x = HH.th [HP.class_ $ H.ClassName c] [HH.text $ show x] 
+        head c x = HH.th [HP.class_ $ H.ClassName c,HE.onClick \_→AddContext x] [HH.text $ show x]
 
-renderTable ∷ ∀m. State → H.ComponentHTML Action () m
-renderTable state@{scores, time} =
+renderTable' ∷ ∀m. State → H.ComponentHTML Action () m
+renderTable' state@{scores, time} =
   HH.table_ $ map HH.tr_ $ addHeaders state $ map (displayScore scores time) <$> table state
 
+renderTable ∷ ∀m. State → H.ComponentHTML Action () m
+renderTable state@{context, modes} =
+  renderTable' $ state { modes =
+    (_ <> context) <$> filter (\x→ x ∩ context == Mode 0) modes }
+
+
 render ∷ ∀m. State → H.ComponentHTML Action () m
-render state = 
+render state =
   HH.div_
     [ renderTable state
-    , HH.button [HE.onClick \_→Increment] [HH.text "bee"]
-    , HH.br_
+    , if state.context /= Mode 0 then HH.p_
+      [ HH.text "viewing modes "
+      , HH.b_ [HH.text $ show state.context]
+      , HH.text ". "
+      , HH.button [ HE.onClick \_→ResetContext ] [HH.text "reset"]
+      ] else HH.text ""
     , HH.label_
-      [ HH.input [HP.type_ HP.InputCheckbox, HE.onClick \_→ToggleScol]
+      [ HH.input [ HP.type_ HP.InputCheckbox
+                 , HP.checked state.scol
+                 , HE.onClick \_→ToggleScol]
       , HH.text "single column one line"
       ]
     , HH.br_
     , HH.label_
-      [ HH.input [HP.type_ HP.InputCheckbox, HE.onClick \_→ToggleShowEmpty]
+      [ HH.input [ HP.type_ HP.InputCheckbox
+                 , HP.checked state.showEmpty
+                 , HE.onClick \_→ToggleShowEmpty]
       , HH.text "show empty score (ε)"
       ]
     , HH.br_
     , HH.label_
       [ HH.text "modes: "
-      , HH.input 
+      , HH.input
         [ HP.type_ HP.InputText
         , HP.class_ (H.ClassName "modes")
         , HP.value $ joinWith " " $ modeToString <$> state.modes
@@ -268,12 +293,11 @@ render state =
       ]
     , HH.button [HE.onClick \_→ResetModes] [HH.text "reset"]
     , HH.br_
-
     , HH.button [HE.onClick \_→ChangeTimeBy $ -365.0*86400.0 ] [ HH.text "-y" ]
     , HH.button [HE.onClick \_→ChangeTimeBy $  -30.0*86400.0 ] [ HH.text "-30d" ]
     , HH.button [HE.onClick \_→ChangeTimeBy $       -86400.0 ] [ HH.text "-d" ]
     , HH.button [HE.onClick \_→ChangeTimeBy $        -3600.0 ] [ HH.text "-h" ]
-    , HH.input 
+    , HH.input
       [ HP.type_ HP.InputDatetimeLocal
       , HP.value $ formatTime state.time
       , HE.onValueChange ChangeTime
