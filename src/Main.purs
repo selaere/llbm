@@ -9,7 +9,7 @@ import Control.Alternative (guard)
 import Control.Apply (lift2)
 import Control.Monad.Error.Class (liftEither)
 import DOM.HTML.Indexed as DOM
-import Data.Array (catMaybes, elemIndex, length, mapMaybe, mapWithIndex, tail, take, uncons, unsnoc, zipWith, (!!), (..))
+import Data.Array (catMaybes, cons, elemIndex, length, mapMaybe, mapWithIndex, snoc, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, instant, toDateTime)
@@ -18,6 +18,8 @@ import Data.Foldable (foldl, sum)
 import Data.Formatter.DateTime (formatDateTime)
 import Data.Int as Int
 import Data.Int.Bits (shl, (.&.), (.|.))
+import Data.Lens (Prism, _2, prism, (%~))
+import Data.Lens.Index (ix)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust, maybe)
@@ -30,6 +32,7 @@ import Data.String.Common (split)
 import Data.String.Regex (regex, match)
 import Data.Time.Duration (Milliseconds(..))
 import Data.Tuple (Tuple(..))
+import Data.Tuple.Nested (type (/\), (/\))
 import Effect (Effect)
 import Effect.Class (class MonadEffect)
 import Effect.Class.Console (log)
@@ -69,7 +72,7 @@ allModes = Mode <$> shl 1 <$> 0 .. (length modeChars - 1)
 modeToString ∷ Mode → String
 modeToString (Mode 0   ) = "ε"
 modeToString (Mode mode) = modeChars
-  # mapWithIndex (\i x→ x <$ guard (mode .&. (1 `shl` i) /= 0))
+  # mapWithIndex (\i x→ x <$ guard (mode .&. (shl 1 i) /= 0))
   # catMaybes # fromCodePointArray
 
 modeFromString ∷ String → Mode
@@ -162,7 +165,7 @@ search cmp arr = search_ cmp arr 0 (length arr)
       | lo >= hi  = lo
       | otherwise =
         let mid = (lo + hi) `div` 2 in
-        case cmp <$> (arr !! mid) of
+        case cmp <$> arr !! mid of
           Just true  → search_ cmp arr (mid+1) hi
           Just false → search_ cmp arr lo mid
           Nothing    → hi
@@ -205,10 +208,24 @@ handleAction = case _ of
   ToggleShowEmpty → H.modify_ (\x→ x {showEmpty = not x.showEmpty})
   ChangeTime s    → maybe (pure unit) (\y→ H.modify_ _ {time = y}) $ strSecs s
 
+_cons ∷ ∀a b. Prism (Array a) (Array b) (a /\ Array a) (b /\ Array b)
+_cons = prism (\(a/\b)→[a]<>b) $ note [] ∘ (\{head,tail}→head/\tail) <∘> uncons
+
+addHeaders ∷ ∀i w. State → Array (Array (HH.HTML i w)) → Array (Array (HH.HTML i w))
+addHeaders {scol, showEmpty, modes} arr =
+  if scol then arr # sel %~ zipWith (flip snoc ∘ head "diag") modes
+          else arr # sel %~ zipWith (cons      ∘ head "left") modes # ix 0 %~ cons (HH.th_ [])
+  where sel = if showEmpty then _cons∘_2 else identity
+        head c x = HH.th [HP.class_ $ H.ClassName c] [HH.text $ show x] 
+
+renderTable ∷ ∀m. State → H.ComponentHTML Action () m
+renderTable state@{scores, time} =
+  HH.table_ $ map HH.tr_ $ addHeaders state $ map (displayScore scores time) <$> table state
+
 render ∷ ∀m. State → H.ComponentHTML Action () m
 render state = 
   HH.div_
-    [ HH.table_ $ (HH.tr_ ∘ map (displayScore state.scores state.time)) <$> (table state)
+    [ renderTable state
     , HH.button [HE.onClick \_→Increment] [HH.text "bee"]
     , HH.input [HP.type_ HP.InputCheckbox, HE.onClick \_→ToggleScol]
     , HH.input [HP.type_ HP.InputCheckbox, HE.onClick \_→ToggleShowEmpty]
