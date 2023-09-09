@@ -1,6 +1,6 @@
 module Main where
 
-import Prelude (Unit, append, bind, bottom, clamp, div, flip, identity, join, map, mempty, mod, negate, not, otherwise, pure, show, top, unit, (#), ($), (*), (+), (/), (/=), (<#>), (<$>), (<*>), (<=), (<>), (<@>), (==), (>), (>=), (>>=))
+import Prelude
 
 import Affjax as AJ
 import Affjax.ResponseFormat (string)
@@ -16,8 +16,6 @@ import Data.Either (fromRight, hush, note)
 import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
 import Data.Function (on)
 import Data.Int as Int
-import Data.Lens (Prism, _2, prism, (%~))
-import Data.Lens.Index (ix)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust, maybe)
@@ -29,7 +27,6 @@ import Data.String.Common (split)
 import Data.String.Regex (regex, match)
 import Data.Time.Duration (Milliseconds(..))
 import Data.Tuple (Tuple(..))
-import Data.Tuple.Nested (type (/\), (/\))
 import Effect (Effect)
 import Effect.Class (class MonadEffect)
 import Effect.Exception (error)
@@ -39,12 +36,11 @@ import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.VDom.Driver (runUI)
+import Main.Common (doWhen, (∘), (≡), (≢), (⋄))
+import Main.Mode (Mode, ε, (∩))
+import Main.Mode as Mode
 import Murmur3 (hash)
 import Partial.Unsafe (unsafePartial)
-
-import Main.Common (doWhen, (<∘>), (∘))
-import Main.Mode as Mode
-import Main.Mode (Mode, ε, (∩))
 
 type Score =
   { score ∷ Int
@@ -92,22 +88,22 @@ table { modes, scol, showEmpty, context } =
 
 color ∷ String → String
 color "☭🐝" = "rgb(198,234,169)" -- temporary (elm Murmur3 and ursi/purescript-murmur3 treat unicode differently)
-color name = "hsl("<> show hue <>",60%,"<> show lgt <>"%"
+color name = "hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%"
   where h = hash 3054 name
         hue = h `mod` 360
         lgt = ((h `div` 360) `mod` 45) + 40
 
 makeCell' ∷ ∀w i. Mode → HH.Node DOM.HTMLtd w i
-makeCell' mode a = HH.td a ∘ pure ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" <> show mode]
+makeCell' mode a = HH.td a ∘ pure ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
 
 makeCell ∷ ∀w i. Mode → Maybe Score → HH.HTML w i
 makeCell mode Nothing = makeCell' mode [] [HH.text $ show mode]
 makeCell mode (Just {score, owner, date}) =
   makeCell' mode
-    [ HP.style $ "background-color:" <> color owner
-    , HP.title $ owner<>" "<> show score <>" in "<> show mode <>" at "<> formatTime date]
+    [ HP.style $ "background-color:" ⋄ color owner
+    , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date]
     [ HH.text $ show score
-    , HH.small_ [HH.text $ " " <> show mode]
+    , HH.small_ [HH.text $ " " ⋄ show mode]
     , HH.br_
     , HH.small_ [HH.text owner]
     ]
@@ -134,6 +130,7 @@ data Action =
   | ToggleShowEmpty
   | ChangeTime String
   | ChangeTimeBy Number
+  | ResetTime
   | ChangeModes String
   | ResetModes
   | AddContext Mode
@@ -151,7 +148,7 @@ type State =
 
 rotate ∷ ∀a. Array a → Array a
 rotate arr = case unsnoc arr of
-  Just { init, last } → [last] <> init
+  Just { init, last } → [last] ⋄ init
   Nothing -> []
 
 initialState ∷ File → State
@@ -168,6 +165,9 @@ initialState {scores,lastUpdated} =
 formatTime ∷ Instant → String
 formatTime = fromRight "1970-01-01T00:00:00" ∘ formatDateTime "YYYY-MM-DDTHH:mm:ss" ∘ toDateTime
 
+showTime ∷ Instant → String
+showTime = fromRight "1970-01-01 00:00:00" ∘ formatDateTime "YYYY-MM-DD HH:mm:ss" ∘ toDateTime
+
 toInstant ∷ Number → Instant
 toInstant = unsafePartial $
   fromJust ∘ instant ∘ on clamp unInstant bottom top ∘ Milliseconds ∘ (*) 1000.0
@@ -178,24 +178,21 @@ handleAction = case _ of
   ToggleShowEmpty → H.modify_ \x→ x {showEmpty = not x.showEmpty}
   ChangeModes s   → H.modify_ _ {modes = Mode.fromString <$> split (Pattern " ") s}
   ResetModes      → H.modify_ _ {modes = Mode.all}
-  ChangeTime s    → doWhen (S.length s <= 16) (_<>":00") s
+  ChangeTime s    → doWhen (S.length s <= 16) (_⋄":00") s
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
                     # hush <#> fromDateTime
                     # maybe (pure unit) (\y→ H.modify_ _ {time = y})
   ChangeTimeBy n  → H.modify_ \x→ x {time = toInstant $ n + unwrap (unInstant x.time) / 1000.0 }
-  AddContext m    → H.modify_ \x→ x {context = x.context <> m}
+  ResetTime       → H.modify_ \x→ x {time = x.lastUpdated}
+  AddContext m    → H.modify_ \x→ x {context = doWhen (m ≢ ε) (append x.context) m}
   ResetContext    → H.modify_ _ {context = ε}
 
-_cons ∷ ∀a b. Prism (Array a) (Array b) (a /\ Array a) (b /\ Array b)
-_cons = prism (\(a/\b)→[a]<>b) $ note [] ∘ (\{head,tail}→head/\tail) <∘> uncons
-
 addHeaders ∷ ∀m. State → Array (Array (H.ComponentHTML Action () m)) → Array (Array (H.ComponentHTML Action () m))
-addHeaders {scol, showEmpty, modes} arr =
-  if scol then arr # sel %~ zipWith (flip snoc ∘ head "diag") modes
-          else arr # sel %~ zipWith (cons      ∘ head "left") modes
-                   # doWhen showEmpty (ix 0 %~ cons (HH.th_ []))
-  where sel = if showEmpty then _cons∘_2 else identity
-        head c x = HH.th [HP.class_ $ H.ClassName c,HE.onClick \_→AddContext x] [HH.text $ show x]
+addHeaders {scol, showEmpty, modes} =
+  zipWith add $ doWhen showEmpty (cons ε) modes
+    where add x = if scol then flip snoc $ head (if x ≡ ε then "right" else "diag") x
+                          else cons $ head "left" x
+          head c x = HH.th [HP.class_ $ H.ClassName c, HE.onClick \_→AddContext x] [HH.text $ show x]
 
 renderTable' ∷ ∀m. State → H.ComponentHTML Action () m
 renderTable' state@{scores, time} =
@@ -204,15 +201,15 @@ renderTable' state@{scores, time} =
 renderTable ∷ ∀m. State → H.ComponentHTML Action () m
 renderTable state@{context, modes} =
   renderTable' $ state { modes =
-    append context <$> filter (\x→ x ∩ context == ε) modes }
+    append context <$> filter (\x→ x ∩ context ≡ ε) modes }
 
 
 render ∷ ∀m. State → H.ComponentHTML Action () m
 render state =
   HH.div_ $ flip append [HH.main_ [ renderTable state ]] [HH.nav_
     [ HH.h2_ [HH.text ",leader lead board man? (llbm)"]
-    , HH.p_ [HH.text $ "click on a score to play. click on a gamemode to see more. scores last updated "<>(formatTime state.lastUpdated)<>" (UTC+00:00)."]
-    , if state.context /= ε then HH.p_
+    , HH.p_ [HH.text $ "click on a score to play. click on a gamemode to see more. scores last updated "⋄ showTime state.lastUpdated ⋄" (UTC+00:00)."]
+    , if state.context ≢ ε then HH.p_
       [ HH.text "viewing modes "
       , HH.b_ [HH.text $ show state.context]
       , HH.text ". "
@@ -253,6 +250,7 @@ render state =
         , HP.attr (H.AttrName "max") $ formatTime state.lastUpdated
         ]
       ]
+    , HH.button [HE.onClick \_→ResetTime] [HH.text "skip forward"]
     , HH.br_
     , HH.button [HE.onClick \_→ChangeTimeBy $ -365.0*86400.0 ] [ HH.text "-y" ]
     , HH.button [HE.onClick \_→ChangeTimeBy $  -30.0*86400.0 ] [ HH.text "-30d" ]
