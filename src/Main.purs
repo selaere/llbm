@@ -1,34 +1,29 @@
 module Main where
 
-import Prelude hiding (apply)
+import Prelude (Unit, append, bind, bottom, clamp, div, flip, identity, join, map, mempty, mod, negate, not, otherwise, pure, show, top, unit, (#), ($), (*), (+), (/), (/=), (<#>), (<$>), (<*>), (<=), (<>), (<@>), (==), (>), (>=), (>>=))
 
 import Affjax as AJ
 import Affjax.ResponseFormat (string)
 import Affjax.Web as AJW
-import Control.Alternative (guard)
 import Control.Apply (lift2)
 import Control.Monad.Error.Class (liftEither)
 import DOM.HTML.Indexed as DOM
-import Data.Array (catMaybes, cons, elemIndex, filter, length, mapMaybe, mapWithIndex, snoc, tail, take, uncons, unsnoc, zipWith, (!!), (..))
+import Data.Array (cons, filter, length, mapMaybe, snoc, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
 import Data.Either (fromRight, hush, note)
-import Data.Foldable (foldl, sum)
 import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
 import Data.Function (on)
 import Data.Int as Int
-import Data.Int.Bits (shl, (.&.), (.^.), (.|.))
 import Data.Lens (Prism, _2, prism, (%~))
 import Data.Lens.Index (ix)
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..), fromJust, maybe)
-import Data.Monoid as M
-import Data.Monoid.Endo (Endo(..))
-import Data.Newtype (class Newtype, under, unwrap)
+import Data.Newtype (unwrap)
 import Data.Number as Number
-import Data.String (CodePoint, Pattern(..), fromCodePointArray, joinWith, toCodePointArray)
+import Data.String (Pattern(..), joinWith)
 import Data.String as S
 import Data.String.Common (split)
 import Data.String.Regex (regex, match)
@@ -47,49 +42,9 @@ import Halogen.VDom.Driver (runUI)
 import Murmur3 (hash)
 import Partial.Unsafe (unsafePartial)
 
-
-infixr 9 compose as ∘
-
-mapCompose ∷ ∀f t a b. Functor f ⇒ (a → b) → (t → f a) → t → f b
-mapCompose = (∘) ∘ map
-infixr 9 mapCompose as <∘>
-
-newtype Mode = Mode Int
-instance Show Mode where show = modeToString
-derive instance Newtype Mode _
-derive instance Eq Mode
-derive instance Ord Mode
-instance Bounded Mode where
-  bottom = Mode 0
-  top = modeFromString $ fromCodePointArray modeChars
-instance Semigroup Mode where append = modeMerge
-instance Monoid Mode where mempty = Mode 0
-
-modeChars ∷ Array CodePoint
-modeChars = toCodePointArray "bwuipscmhaedtnvklgjyrf"
-
-allModes ∷ Array Mode
-allModes = Mode <$> shl 1 <$> 0 .. (length modeChars - 1)
-
-modeToString ∷ Mode → String
-modeToString (Mode 0   ) = "ε"
-modeToString (Mode mode) = modeChars
-  # mapWithIndex (\i x→ x <$ guard (mode .&. (shl 1 i) /= 0))
-  # catMaybes # fromCodePointArray
-
-modeFromString ∷ String → Mode
-modeFromString =
-  Mode ∘ foldl (.|.) 0 ∘ (shl 1 ∘ sum ∘ elemIndex `flip` modeChars) <∘> toCodePointArray
-
-modeMerge ∷ Mode → Mode → Mode
-modeMerge (Mode x) (Mode y) = Mode $ x .|. y
-
-modeIntersect ∷ Mode → Mode → Mode
-modeIntersect (Mode x) (Mode y) = Mode $ x .&. y
-infixr 6 modeIntersect as ∩
-
-modeSubtract ∷ Mode → Mode → Mode
-modeSubtract (Mode x) (Mode y) = Mode $ x .&. (y .^. unwrap (top∷Mode))
+import Main.Common (doWhen, (<∘>), (∘))
+import Main.Mode as Mode
+import Main.Mode (Mode, ε, (∩))
 
 type Score =
   { score ∷ Int
@@ -100,14 +55,11 @@ type Score =
 score ∷ Int → Mode → Instant → String → Score
 score = {score: _, mode: _, date: _, owner: _}
 
-strSecs ∷ String → Maybe Instant
-strSecs = toInstant <∘> Number.fromString
-
 parseLine ∷ String → Maybe Score
 parseLine a = join (match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
   [s, m, d, o] -> score <$> (s >>= Int.fromString)
-                        <*> (m <#> modeFromString)
-                        <*> (d >>= strSecs)
+                        <*> (m <#> Mode.fromString)
+                        <*> (d >>= Number.fromString <#> toInstant)
                         <*> o
   _ -> Nothing
   where
@@ -118,7 +70,7 @@ type File = { scores ∷ Map Mode (Array Score), lastUpdated ∷ Instant }
 parseFile ∷ String → Maybe File
 parseFile file = do
   {head, tail} ← uncons $ split (Pattern "\n") file
-  lastUpdated ← strSecs head
+  lastUpdated ← toInstant <$> Number.fromString head
   let scores = Map.fromFoldableWith append $ lift2 Tuple _.mode pure <$> mapMaybe parseLine tail
   pure {scores, lastUpdated}
 
@@ -130,16 +82,13 @@ main = HA.runHalogenAff do
   body ← HA.awaitBody
   runUI component datas body
 
-applyWhen ∷ ∀a. Boolean → (a → a) → a → a
-applyWhen = under Endo ∘ M.guard
-
 table ∷ State → Array (Array Mode)
 table { modes, scol, showEmpty, context } =
   1 .. (length modes)
   <#> take `flip` modes
-  <#> applyWhen scol rotate
+  <#> doWhen scol rotate
   # zipWith (map ∘ append) modes
-  # applyWhen showEmpty (append [[context]])
+  # doWhen showEmpty (append [[context]])
 
 color ∷ String → String
 color "☭🐝" = "rgb(198,234,169)" -- temporary (elm Murmur3 and ursi/purescript-murmur3 treat unicode differently)
@@ -209,9 +158,9 @@ initialState ∷ File → State
 initialState {scores,lastUpdated} =
   { scores
   , lastUpdated
-  , context:   Mode 0
+  , context:   ε
   , time:      lastUpdated
-  , modes:     allModes
+  , modes:     Mode.all
   , scol:      false
   , showEmpty: true
   }
@@ -227,15 +176,15 @@ handleAction ∷ ∀o m. MonadEffect m ⇒ Action → H.HalogenM State Action ()
 handleAction = case _ of
   ToggleScol      → H.modify_ \x→ x {scol      = not x.scol     }
   ToggleShowEmpty → H.modify_ \x→ x {showEmpty = not x.showEmpty}
-  ChangeModes s   → H.modify_ _ {modes = modeFromString <$> split (Pattern " ") s}
-  ResetModes      → H.modify_ _ {modes = allModes}
-  ChangeTime s    → applyWhen (S.length s <= 16) (_<>":00") s
+  ChangeModes s   → H.modify_ _ {modes = Mode.fromString <$> split (Pattern " ") s}
+  ResetModes      → H.modify_ _ {modes = Mode.all}
+  ChangeTime s    → doWhen (S.length s <= 16) (_<>":00") s
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
                     # hush <#> fromDateTime
                     # maybe (pure unit) (\y→ H.modify_ _ {time = y})
   ChangeTimeBy n  → H.modify_ \x→ x {time = toInstant $ n + unwrap (unInstant x.time) / 1000.0 }
   AddContext m    → H.modify_ \x→ x {context = x.context <> m}
-  ResetContext    → H.modify_ _ {context = Mode 0}
+  ResetContext    → H.modify_ _ {context = ε}
 
 _cons ∷ ∀a b. Prism (Array a) (Array b) (a /\ Array a) (b /\ Array b)
 _cons = prism (\(a/\b)→[a]<>b) $ note [] ∘ (\{head,tail}→head/\tail) <∘> uncons
@@ -244,7 +193,7 @@ addHeaders ∷ ∀m. State → Array (Array (H.ComponentHTML Action () m)) → A
 addHeaders {scol, showEmpty, modes} arr =
   if scol then arr # sel %~ zipWith (flip snoc ∘ head "diag") modes
           else arr # sel %~ zipWith (cons      ∘ head "left") modes
-                   # applyWhen showEmpty (ix 0 %~ cons (HH.th_ []))
+                   # doWhen showEmpty (ix 0 %~ cons (HH.th_ []))
   where sel = if showEmpty then _cons∘_2 else identity
         head c x = HH.th [HP.class_ $ H.ClassName c,HE.onClick \_→AddContext x] [HH.text $ show x]
 
@@ -255,14 +204,14 @@ renderTable' state@{scores, time} =
 renderTable ∷ ∀m. State → H.ComponentHTML Action () m
 renderTable state@{context, modes} =
   renderTable' $ state { modes =
-    (_ <> context) <$> filter (\x→ x ∩ context == Mode 0) modes }
+    (_ <> context) <$> filter (\x→ x ∩ context == ε) modes }
 
 
 render ∷ ∀m. State → H.ComponentHTML Action () m
 render state =
   HH.div_
     [ renderTable state
-    , if state.context /= Mode 0 then HH.p_
+    , if state.context /= ε then HH.p_
       [ HH.text "viewing modes "
       , HH.b_ [HH.text $ show state.context]
       , HH.text ". "
@@ -287,7 +236,7 @@ render state =
       , HH.input
         [ HP.type_ HP.InputText
         , HP.class_ (H.ClassName "modes")
-        , HP.value $ joinWith " " $ modeToString <$> state.modes
+        , HP.value $ joinWith " " $ show <$> state.modes
         , HE.onValueChange ChangeModes
         ]
       ]
