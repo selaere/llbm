@@ -4,14 +4,29 @@
     <meta charset="UTF-8">
     <title>,leader lead board man? (llbm)</title>
     <style>
+div {
+    width: 100vw; height: 100vh;
+    display: flex; flex-flow: wrap-reverse;
+    overflow-y: scroll; /*-ms-overflow-style: none; scrollbar-width: none;*/
+}
+main {
+    flex-grow: 3;
+    padding: 0% 2%; margin: auto 0; box-sizing: border-box;
+}
+nav {
+    background-color: #eee;
+    display: block; flex-grow: 1; box-sizing: border-box;
+    width: 30em; max-height: 100%; padding: 0.4em 0.8em;
+    overflow-wrap: anywhere; overflow-y: scroll; /*-ms-overflow-style: none; scrollbar-width: none;*/
+}
 body {
-    margin: 2% 4%;
+    margin: 0;
     font-family: sans-serif;
 }
 p, main, input, button { font-size: 1rem; }
 table {table-layout:fixed; border-spacing: 2px;}
 td,th {
-    font-size: 0.9em;
+    font-size: 0.81em;
     min-width: 3.5em; max-width: 3.5em; height: 2.75em;
     white-space: nowrap; overflow: hidden; text-overflow: clip;
     text-align: center; padding-top: 5px; box-sizing: border-box;
@@ -19,16 +34,15 @@ td,th {
     line-height: 95%;
 }
 input.modes { width: 20em; }
-th { cursor:pointer}
+th { cursor: pointer; }
 a { color: inherit; text-decoration: inherit; }
-.diag { border-width: 0px 0px 2px 2px; border-style: outset; font-size: smaller }
-.left { border-width: 0px 2px 0px 0px; border-style: outset; font-size: smaller }
+.diag { border-width: 0px 0px 2px 2px; border-style: outset; font-size: smaller; }
+.left { border-width: 0px 2px 0px 0px; border-style: outset; font-size: smaller; }
 .hl { border: #555 solid 1px;}
     </style>
 </head>
 
 <body>
-    <div id="myapp"></div>
     <script src="./main.js"></script>
 </body>
 </html>

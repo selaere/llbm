@@ -204,13 +204,14 @@ renderTable' state@{scores, time} =
 renderTable ∷ ∀m. State → H.ComponentHTML Action () m
 renderTable state@{context, modes} =
   renderTable' $ state { modes =
-    (_ <> context) <$> filter (\x→ x ∩ context == ε) modes }
+    append context <$> filter (\x→ x ∩ context == ε) modes }
 
 
 render ∷ ∀m. State → H.ComponentHTML Action () m
 render state =
-  HH.div_
-    [ renderTable state
+  HH.div_ $ flip append [HH.main_ [ renderTable state ]] [HH.nav_
+    [ HH.h2_ [HH.text ",leader lead board man? (llbm)"]
+    , HH.p_ [HH.text $ "click on a score to play. click on a gamemode to see more. scores last updated "<>(formatTime state.lastUpdated)<>" (UTC+00:00)."]
     , if state.context /= ε then HH.p_
       [ HH.text "viewing modes "
       , HH.b_ [HH.text $ show state.context]
@@ -242,22 +243,26 @@ render state =
       ]
     , HH.button [HE.onClick \_→ResetModes] [HH.text "reset"]
     , HH.br_
+    , HH.label_
+      [ HH.text "date: "
+      , HH.input
+        [ HP.type_ HP.InputDatetimeLocal
+        , HP.value $ formatTime state.time
+        , HE.onValueChange ChangeTime
+        , HP.attr (H.AttrName "step") "1"
+        , HP.attr (H.AttrName "max") $ formatTime state.lastUpdated
+        ]
+      ]
+    , HH.br_
     , HH.button [HE.onClick \_→ChangeTimeBy $ -365.0*86400.0 ] [ HH.text "-y" ]
     , HH.button [HE.onClick \_→ChangeTimeBy $  -30.0*86400.0 ] [ HH.text "-30d" ]
     , HH.button [HE.onClick \_→ChangeTimeBy $       -86400.0 ] [ HH.text "-d" ]
     , HH.button [HE.onClick \_→ChangeTimeBy $        -3600.0 ] [ HH.text "-h" ]
-    , HH.input
-      [ HP.type_ HP.InputDatetimeLocal
-      , HP.value $ formatTime state.time
-      , HE.onValueChange ChangeTime
-      , HP.attr (H.AttrName "step") "1"
-      , HP.attr (H.AttrName "max") $ formatTime state.lastUpdated
-      ]
     , HH.button [HE.onClick \_→ChangeTimeBy $         3600.0 ] [ HH.text "+h" ]
     , HH.button [HE.onClick \_→ChangeTimeBy $        86400.0 ] [ HH.text "+d" ]
     , HH.button [HE.onClick \_→ChangeTimeBy $   30.0*86400.0 ] [ HH.text "+30d" ]
     , HH.button [HE.onClick \_→ChangeTimeBy $  365.0*86400.0 ] [ HH.text "+y" ]
-    ]
+    ]]
 
 component ∷ ∀query o m. MonadEffect m ⇒ H.Component query File o m
 component = H.mkComponent
