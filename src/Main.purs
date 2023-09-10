@@ -7,6 +7,8 @@ import Affjax.ResponseFormat (string)
 import Affjax.Web as AJW
 import Control.Biapply (bilift2)
 import Control.Monad.Error.Class (liftEither)
+import Control.Monad.Rec.Class (forever)
+import DOM.HTML.Indexed as DOM
 import Data.Array (cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
@@ -18,7 +20,7 @@ import Data.Function (on)
 import Data.HashMap (HashMap)
 import Data.HashMap as HM
 import Data.Int as Int
-import Data.Maybe (Maybe(..), fromJust, maybe)
+import Data.Maybe (Maybe(..), fromJust, isNothing, maybe)
 import Data.Newtype (unwrap)
 import Data.Number as Number
 import Data.String (Pattern(..), joinWith)
@@ -28,20 +30,21 @@ import Data.String.Regex (regex, match)
 import Data.Time.Duration (Milliseconds(..))
 import Data.Tuple (swap)
 import Effect (Effect)
-import Effect.Class (class MonadEffect)
+import Effect.Aff as Aff
+import Effect.Aff.Class (class MonadAff)
 import Effect.Exception (error)
 import Halogen as H
 import Halogen.Aff as HA
 import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
+import Halogen.Subscription as HS
 import Halogen.VDom.Driver (runUI)
 import Main.Common (doWhen, (∘), (≡), (≢), (⋄), (⍪))
 import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
 import Murmur3 (hash)
 import Partial.Unsafe (unsafePartial)
-import DOM.HTML.Indexed as DOM
 
 type Score =
   { score ∷ Int
@@ -169,6 +172,9 @@ data Action =
   | ResetContext
   | Hover Mode
   | Unhover
+  | ChangeSpeed String
+  | StartTimer
+  | Tick
 
 type State =
   { scores    ∷ HashMap Mode (Array Score)
@@ -179,6 +185,8 @@ type State =
   , scol      ∷ Boolean
   , showEmpty ∷ Boolean
   , selection ∷ Maybe Mode
+  , timerSid  ∷ Maybe H.SubscriptionId
+  , speed     ∷ Number
   }
 
 rotate ∷ ∀a. Array a → Array a
@@ -196,6 +204,8 @@ initialState {scores,lastUpdated} =
   , scol:      false
   , showEmpty: true
   , selection: Nothing
+  , timerSid:  Nothing
+  , speed:     10800.0
   }
 
 formatTime ∷ Instant → String
@@ -208,7 +218,10 @@ toInstant ∷ Number → Instant
 toInstant = unsafePartial $
   fromJust ∘ instant ∘ on clamp unInstant bottom top ∘ Milliseconds ∘ (*) 1000.0
 
-handleAction ∷ ∀o m. MonadEffect m ⇒ Action → H.HalogenM State Action () o m Unit
+advanceTime ∷ Number → Instant → Instant → Instant
+advanceTime n now time = min now $ toInstant $ n + unwrap (unInstant time) / 1000.0
+
+handleAction ∷ ∀o m. MonadAff m ⇒ Action → H.HalogenM State Action () o m Unit
 handleAction = case _ of
   ToggleScol      → H.modify_ \x→ x {scol      = not x.scol     }
   ToggleShowEmpty → H.modify_ \x→ x {showEmpty = not x.showEmpty}
@@ -218,12 +231,18 @@ handleAction = case _ of
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
                     # hush <#> fromDateTime
                     # maybe (pure unit) (\y→ H.modify_ _ {time = y})
-  ChangeTimeBy n  → H.modify_ \x→ x {time = toInstant $ n + unwrap (unInstant x.time) / 1000.0 }
+  ChangeTimeBy n  → H.modify_ \x→ x {time = advanceTime n x.lastUpdated x.time }
   ResetTime       → H.modify_ \x→ x {time = x.lastUpdated}
   AddContext m    → H.modify_ \x→ x {context = doWhen (m ≢ ε) (append x.context) m}
   ResetContext    → H.modify_ _ {context = ε}
   Hover m         → H.modify_ _ {selection = Just m}
   Unhover         → H.modify_ _ {selection = Nothing}
+  StartTimer      →
+    H.gets _.timerSid >>= maybe
+      (timer 25.0 >>= H.subscribe >>= \sid → H.modify_ _ { timerSid = Just sid })
+      (\x→H.unsubscribe x *> H.modify_ _ { timerSid = Nothing })
+  ChangeSpeed s   → maybe (pure unit) (\y→H.modify_ _ { speed = y }) (Number.fromString s)
+  Tick            → H.modify_ \x→ x {time = advanceTime x.speed x.lastUpdated x.time }
 
 addHeaders ∷ ∀w. State → Array (Array (HH.HTML w Action)) → Array (Array (HH.HTML w Action))
 addHeaders {scol, showEmpty, modes} =
@@ -293,6 +312,19 @@ render state =
     , skip (    -86400) "-d" , skip (     -3600) "-h"
     , skip (      3600) "+h" , skip (     86400) "+d"
     , skip (   7*86400) "+7d", skip (  30*86400) "+30d", skip ( 365*86400) "+y"
+    , HH.br_
+    , HH.button 
+      [HE.onClick \_→StartTimer]
+      [HH.text if isNothing state.timerSid then "start" else "stop"]
+    , HH.label_
+      [ HH.text " speed: "
+      , HH.input
+        [ HP.type_ HP.InputText
+        , HP.class_ (H.ClassName "modes")
+        , HP.value $ show state.speed
+        , HE.onValueChange ChangeSpeed
+        ]
+      ]
     , case state.selection of
         Just m → HH.div_ 
           [ HH.h3_ [ HH.text $ "high score history for mode "⋄ show m ]
@@ -304,7 +336,15 @@ render state =
   where tab = table $ contextifyState state
         skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
 
-component ∷ ∀query o m. MonadEffect m ⇒ H.Component query File o m
+timer ∷ ∀m. MonadAff m ⇒ Number → m (HS.Emitter Action)
+timer tickSpeed = do
+  { emitter, listener } <- H.liftEffect HS.create
+  _ ← H.liftAff $ Aff.forkAff $ forever do
+    Aff.delay $ Milliseconds tickSpeed
+    H.liftEffect $ HS.notify listener Tick
+  pure emitter
+
+component ∷ ∀query o m. MonadAff m ⇒ H.Component query File o m
 component = H.mkComponent
   { initialState
   , render
