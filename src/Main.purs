@@ -5,13 +5,14 @@ import Prelude
 import Affjax as AJ
 import Affjax.ResponseFormat (string)
 import Affjax.Web as AJW
+import Control.Biapply (bilift2)
 import Control.Monad.Error.Class (liftEither)
 import DOM.HTML.Indexed as DOM
-import Data.Array (cons, filter, foldl, length, mapMaybe, snoc, tail, take, uncons, unsnoc, zipWith, (!!), (..))
+import Data.Array (cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
-import Data.Either (fromRight, hush, note)
+import Data.Either (Either(..), fromRight, hush, note)
 import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
 import Data.Function (on)
 import Data.HashMap (HashMap)
@@ -25,6 +26,7 @@ import Data.String as S
 import Data.String.Common (split)
 import Data.String.Regex (regex, match)
 import Data.Time.Duration (Milliseconds(..))
+import Data.Tuple (swap)
 import Effect (Effect)
 import Effect.Class (class MonadEffect)
 import Effect.Exception (error)
@@ -34,7 +36,7 @@ import Halogen.HTML as HH
 import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.VDom.Driver (runUI)
-import Main.Common (doWhen, (∘), (≡), (≢), (⋄))
+import Main.Common (doWhen, (∘), (≡), (≢), (⋄), (⍪))
 import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
 import Murmur3 (hash)
@@ -76,13 +78,29 @@ main = HA.runHalogenAff do
   body ← HA.awaitBody
   runUI component datas body
 
-table ∷ State → Array (Array Mode)
-table { modes, scol, showEmpty, context } =
+table ∷ State → Array (Array (Either Mode Score))
+table { modes, scol, showEmpty, context, scores, time } =
   1 .. (length modes)
   <#> take `flip` modes
   <#> doWhen scol rotate
   # zipWith (map ∘ append) modes
   # doWhen showEmpty (append [[context]])
+  <#> map (findScore scores time)
+
+leaderboard ∷ ∀w i. Array (Array (Either Mode Score)) → HH.HTML w i
+leaderboard tab =
+  hush `mapMaybe` join tab
+  # foldl (\m i→HM.insertWith (join bilift2 (+)) i.owner (1 ⍪ max 0 i.score) m) HM.empty
+  # HM.toArrayBy (⍪)
+  # sortBy (on (flip compare) swap)
+  # mapWithIndex (\i (name⍪no⍪score) → HH.tr_
+    [ HH.td_ [HH.text $ show (i+1) ⋄ "."]
+    , HH.td [HP.style $ "background-color:" ⋄ color name] [HH.text $ name]
+    , HH.td_ [HH.text $ show no]
+    , HH.td_ [HH.text $ show score]
+    ])
+  # cons (HH.tr_ $ HH.th_ ∘ pure ∘ HH.text <$> ["rank","name","high scores","total points"])
+  # HH.table [ HP.class_ $ H.ClassName "scores"]
 
 color ∷ String → String
 color "☭🐝" = "rgb(198,234,169)" -- temporary (elm Murmur3 and ursi/purescript-murmur3 treat unicode differently)
@@ -94,9 +112,9 @@ color name = "hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%"
 makeCell' ∷ ∀w i. Mode → HH.Node DOM.HTMLtd w i
 makeCell' mode a = HH.td a ∘ pure ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
 
-makeCell ∷ ∀w i. Mode → Maybe Score → HH.HTML w i
-makeCell mode Nothing = makeCell' mode [] [HH.text $ show mode]
-makeCell mode (Just {score, owner, date}) = makeCell' mode
+makeCell ∷ ∀w i. Either Mode Score → HH.HTML w i
+makeCell (Left mode) = makeCell' mode [] [HH.text $ show mode]
+makeCell (Right {mode, score, owner, date}) = makeCell' mode
   [ HP.style $ "background-color:" ⋄ color owner
   , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date]
   [ HH.text $ show score
@@ -117,8 +135,8 @@ search cmp arr = search_ cmp arr 0 (length arr)
           Just false → search_ cmp arr lo mid
           Nothing    → hi
 
-displayScore ∷ ∀w i. HashMap Mode (Array Score) → Instant → Mode → HH.HTML w i
-displayScore scores time mode = makeCell mode do
+findScore ∷ HashMap Mode (Array Score) → Instant → Mode → Either Mode Score
+findScore scores time mode = note mode do
   arr ← HM.lookup mode scores
   arr !! search (\y→ y.date > time) arr
 
@@ -191,19 +209,18 @@ addHeaders {scol, showEmpty, modes} =
                           else cons $ head "left" x
           head c x = HH.th [HP.class_ $ H.ClassName c, HE.onClick \_→AddContext x] [HH.text $ show x]
 
-renderTable' ∷ ∀m. State → H.ComponentHTML Action () m
-renderTable' state@{scores, time} =
-  HH.table_ $ map HH.tr_ $ addHeaders state $ map (displayScore scores time) <$> table state
+renderTable ∷ ∀m. Array (Array (Either Mode Score)) → State → H.ComponentHTML Action () m
+renderTable tab state =
+  HH.table [HP.class_ $ H.ClassName "y"] $
+    map HH.tr_ $ addHeaders state $ map makeCell <$> tab
 
-renderTable ∷ ∀m. State → H.ComponentHTML Action () m
-renderTable state@{context, modes} =
-  renderTable' $ state { modes =
-    append context <$> filter (\x→ x ∩ context ≡ ε) modes }
-
+contextifyState ∷ State → State
+contextifyState state@{context,modes} = state { modes =
+  append context <$> filter (\x→ x ∩ context ≡ ε) modes }
 
 render ∷ ∀m. State → H.ComponentHTML Action () m
 render state =
-  HH.div_ $ flip append [HH.main_ [ renderTable state ]] [HH.nav_
+  HH.div_ $ flip append [HH.main_ [ renderTable tab $ contextifyState state ]] [HH.nav_
     [ HH.h2_ [HH.text ",leader lead board man? (llbm)"]
     , HH.p_ [HH.text $ "click on a score to play. click on a gamemode to see more. scores last updated "⋄ showTime state.lastUpdated ⋄" (UTC+00:00)."]
     , if state.context ≢ ε then HH.p_
@@ -253,8 +270,10 @@ render state =
     , skip (    -86400) "-d" , skip (     -3600) "-h"
     , skip (      3600) "+h" , skip (     86400) "+d"
     , skip (   7*86400) "+7d", skip (  30*86400) "+30d", skip ( 365*86400) "+y"
+    , leaderboard tab
     ]]
-  where skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
+  where tab = table $ contextifyState state
+        skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
 
 component ∷ ∀query o m. MonadEffect m ⇒ H.Component query File o m
 component = H.mkComponent

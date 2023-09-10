@@ -24,8 +24,8 @@ body {
     font-family: sans-serif;
 }
 p, main, input, button { font-size: 1rem; }
-table {table-layout:fixed; border-spacing: 2px;}
-td,th {
+table.y {table-layout:fixed; border-spacing: 2px;}
+table.y td,table.y th {
     font-size: 0.81em;
     min-width: 3.5em; max-width: 3.5em; height: 2.75em;
     white-space: nowrap; overflow: hidden; text-overflow: clip;
@@ -33,12 +33,17 @@ td,th {
     border: 0px solid black;
     line-height: 95%;
 }
+table.y th { cursor: pointer; }
 input.modes { width: 20em; }
-th { cursor: pointer; }
 a { color: inherit; text-decoration: inherit; }
-.diag { border-width: 0px 0px 2px 2px; border-style: outset; font-size: smaller; }
-.left { border-width: 0px 2px 0px 0px; border-style: outset; font-size: smaller; }
-.right { border-width: 0px 0px 0px 2px; border-style: outset; font-size: smaller; }
+table.y .diag { border-width: 0px 0px 2px 2px; border-style: outset; font-size: smaller; }
+table.y .left { border-width: 0px 2px 0px 0px; border-style: outset; font-size: smaller; }
+table.y .right { border-width: 0px 0px 0px 2px; border-style: outset; font-size: smaller; }
+table.scores { border-collapse: collapse; }
+
+table.scores tr *        { border: 1px solid #777; padding: 0 0.3em; }
+table.scores tr:nth-child(odd) { background-color: #fff; }
+table.scores tr td       { text-align: right; }
 .hl { border: #555 solid 1px;}
     </style>
 </head>
