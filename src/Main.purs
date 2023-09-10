@@ -7,12 +7,12 @@ import Affjax.ResponseFormat (string)
 import Affjax.Web as AJW
 import Control.Biapply (bilift2)
 import Control.Monad.Error.Class (liftEither)
-import DOM.HTML.Indexed as DOM
 import Data.Array (cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
 import Data.Either (Either(..), fromRight, hush, note)
+import Data.Foldable (fold)
 import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
 import Data.Function (on)
 import Data.HashMap (HashMap)
@@ -41,6 +41,7 @@ import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
 import Murmur3 (hash)
 import Partial.Unsafe (unsafePartial)
+import DOM.HTML.Indexed as DOM
 
 type Score =
   { score ∷ Int
@@ -95,28 +96,44 @@ leaderboard tab =
   # sortBy (on (flip compare) swap)
   # mapWithIndex (\i (name⍪no⍪score) → HH.tr_
     [ HH.td_ [HH.text $ show (i+1) ⋄ "."]
-    , HH.td [HP.style $ "background-color:" ⋄ color name] [HH.text $ name]
+    , HH.td [HP.style $ color name] [HH.text name]
     , HH.td_ [HH.text $ show no]
     , HH.td_ [HH.text $ show score]
     ])
   # cons (HH.tr_ $ HH.th_ ∘ pure ∘ HH.text <$> ["rank","name","high scores","total points"])
-  # HH.table [ HP.class_ $ H.ClassName "scores"]
+  # HH.table [ HP.class_ $ H.ClassName "scores" ]
+
+history ∷ ∀w i. State → Mode → HH.HTML w i
+history state mode =
+  fold (HM.lookup mode state.scores)
+  <#> (\{score,date,owner} → HH.tr
+    (if date > state.time then [HP.class_ $ H.ClassName "dark"] else [])
+    [ HH.td [HP.style $ color owner] [HH.text $ owner]
+    , HH.td_ [HH.text $ show score]
+    , HH.td_ [HH.text $ showTime date]
+    ])
+  # cons (HH.tr_ $ HH.th_ ∘ pure ∘ HH.text <$> ["name","points","date"])
+  # HH.table [ HP.class_ $ H.ClassName "scores" ]
 
 color ∷ String → String
-color "☭🐝" = "rgb(198,234,169)" -- temporary (elm Murmur3 and ursi/purescript-murmur3 treat unicode differently)
-color name = "hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%"
+color "☭🐝" = "background-color:rgb(198,234,169)" -- temporary (elm Murmur3 and ursi/purescript-murmur3 treat unicode differently)
+color name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%"
   where h = hash 3054 name
         hue = h `mod` 360
         lgt = ((h `div` 360) `mod` 45) + 40
 
-makeCell' ∷ ∀w i. Mode → HH.Node DOM.HTMLtd w i
-makeCell' mode a = HH.td a ∘ pure ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
+makeCell' ∷ ∀w. Mode → HH.Node DOM.HTMLtd w Action
+makeCell' mode a = 
+  HH.td (a ⋄ [HE.onMouseEnter \_→Hover mode, HE.onMouseLeave \_→Unhover])
+  ∘ pure
+  ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
 
-makeCell ∷ ∀w i. Either Mode Score → HH.HTML w i
+makeCell ∷ ∀w. Either Mode Score → HH.HTML w Action
 makeCell (Left mode) = makeCell' mode [] [HH.text $ show mode]
 makeCell (Right {mode, score, owner, date}) = makeCell' mode
-  [ HP.style $ "background-color:" ⋄ color owner
-  , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date]
+  [ HP.style $ color owner
+  , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date
+  ]
   [ HH.text $ show score
   , HH.small_ [HH.text $ " " ⋄ show mode]
   , HH.br_
@@ -150,15 +167,18 @@ data Action =
   | ResetModes
   | AddContext Mode
   | ResetContext
+  | Hover Mode
+  | Unhover
 
 type State =
-  { scores ∷ HashMap Mode (Array Score)
+  { scores    ∷ HashMap Mode (Array Score)
   , lastUpdated ∷ Instant
-  , context ∷ Mode
-  , modes  ∷ Array Mode
-  , scol   ∷ Boolean
+  , time      ∷ Instant
+  , context   ∷ Mode
+  , modes     ∷ Array Mode
+  , scol      ∷ Boolean
   , showEmpty ∷ Boolean
-  , time   ∷ Instant
+  , selection ∷ Maybe Mode
   }
 
 rotate ∷ ∀a. Array a → Array a
@@ -175,6 +195,7 @@ initialState {scores,lastUpdated} =
   , modes:     Mode.all
   , scol:      false
   , showEmpty: true
+  , selection: Nothing
   }
 
 formatTime ∷ Instant → String
@@ -201,15 +222,17 @@ handleAction = case _ of
   ResetTime       → H.modify_ \x→ x {time = x.lastUpdated}
   AddContext m    → H.modify_ \x→ x {context = doWhen (m ≢ ε) (append x.context) m}
   ResetContext    → H.modify_ _ {context = ε}
+  Hover m         → H.modify_ _ {selection = Just m}
+  Unhover         → H.modify_ _ {selection = Nothing}
 
-addHeaders ∷ ∀m. State → Array (Array (H.ComponentHTML Action () m)) → Array (Array (H.ComponentHTML Action () m))
+addHeaders ∷ ∀w. State → Array (Array (HH.HTML w Action)) → Array (Array (HH.HTML w Action))
 addHeaders {scol, showEmpty, modes} =
   zipWith add $ doWhen showEmpty (cons ε) modes
     where add x = if scol then flip snoc $ head (if x ≡ ε then "right" else "diag") x
                           else cons $ head "left" x
           head c x = HH.th [HP.class_ $ H.ClassName c, HE.onClick \_→AddContext x] [HH.text $ show x]
 
-renderTable ∷ ∀m. Array (Array (Either Mode Score)) → State → H.ComponentHTML Action () m
+renderTable ∷ ∀w. Array (Array (Either Mode Score)) → State → HH.HTML w Action
 renderTable tab state =
   HH.table [HP.class_ $ H.ClassName "y"] $
     map HH.tr_ $ addHeaders state $ map makeCell <$> tab
@@ -218,7 +241,7 @@ contextifyState ∷ State → State
 contextifyState state@{context,modes} = state { modes =
   append context <$> filter (\x→ x ∩ context ≡ ε) modes }
 
-render ∷ ∀m. State → H.ComponentHTML Action () m
+render ∷ ∀w. State → HH.HTML w Action
 render state =
   HH.div_ $ flip append [HH.main_ [ renderTable tab $ contextifyState state ]] [HH.nav_
     [ HH.h2_ [HH.text ",leader lead board man? (llbm)"]
@@ -270,6 +293,12 @@ render state =
     , skip (    -86400) "-d" , skip (     -3600) "-h"
     , skip (      3600) "+h" , skip (     86400) "+d"
     , skip (   7*86400) "+7d", skip (  30*86400) "+30d", skip ( 365*86400) "+y"
+    , case state.selection of
+        Just m → HH.div_ 
+          [ HH.h3_ [ HH.text $ "high score history for mode "⋄ show m ]
+          , history state m ]
+        Nothing → HH.text ""
+    , HH.h3_ [ HH.text "leaderboard for current table" ]
     , leaderboard tab
     ]]
   where tab = table $ contextifyState state
