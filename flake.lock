@@ -1,5 +1,17 @@
 {
   "nodes": {
+    "bqnlibs": {
+      "flake": false,
+      "locked": {
+        "narHash": "sha256-78eJbhUyNmeEfRm3sT2FRmHbCY6TFXTLf5nSo49xPEw=",
+        "type": "file",
+        "url": "https://github.com/mlochbaum/bqn-libs"
+      },
+      "original": {
+        "type": "file",
+        "url": "https://github.com/mlochbaum/bqn-libs"
+      }
+    },
     "easy-purescript-nix": {
       "inputs": {
         "flake-utils": "flake-utils"
@@ -72,6 +84,7 @@
     },
     "root": {
       "inputs": {
+        "bqnlibs": "bqnlibs",
         "easy-purescript-nix": "easy-purescript-nix",
         "flake-utils": "flake-utils_2",
         "nixpkgs": "nixpkgs"

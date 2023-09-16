@@ -3,8 +3,8 @@ inputs = {
   nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
   flake-utils.url = "github:numtide/flake-utils";
   easy-purescript-nix.url = "github:justinwoo/easy-purescript-nix";
-  bqnlibs.url = "https://github.com/mlochbaum/bqn-libs";
-  bqnlibs.flake = false;
+  #bqnlibs.url = "https://github.com/mlochbaum/bqn-libs";
+  #bqnlibs.flake = false;
 };
 
 outputs = { nixpkgs, flake-utils, easy-purescript-nix, bqnlibs, ... }:

@@ -23,10 +23,8 @@ import Data.Int as Int
 import Data.Maybe (Maybe(..), fromJust, isNothing, maybe)
 import Data.Newtype (unwrap)
 import Data.Number as Number
-import Data.String (Pattern(..), joinWith)
 import Data.String as S
-import Data.String.Common (split)
-import Data.String.Regex (regex, match)
+import Data.String.Regex as RE
 import Data.Time.Duration (Milliseconds(..))
 import Data.Tuple (swap)
 import Effect (Effect)
@@ -56,20 +54,20 @@ score ∷ Int → Mode → Instant → String → Score
 score = {score: _, mode: _, date: _, owner: _}
 
 parseLine ∷ String → Maybe Score
-parseLine a = join (match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
+parseLine a = join (RE.match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
   [s, m, d, o] -> score <$> (s >>= Int.fromString)
                         <*> (m <#> Mode.fromString)
                         <*> (d >>= Number.fromString <#> toInstant)
                         <*> o
   _ -> Nothing
   where
-    reg = hush $ regex "^([^ ]*) ([^ ]*) ([^ ]*) (.*)$" mempty
+    reg = hush $ RE.regex "^([^ ]*) ([^ ]*) ([^ ]*) (.*)$" mempty
 
 type File = { scores ∷ HashMap Mode (Array Score), lastUpdated ∷ Instant }
 
 parseFile ∷ String → Maybe File
 parseFile file = do
-  {head, tail} ← uncons $ split (Pattern "\n") file
+  {head, tail} ← uncons $ S.split (S.Pattern "\n") file
   lastUpdated ← toInstant <$> Number.fromString head
   let scores = foldl (\m i→HM.insertWith (flip (⋄)) i.mode [i] m) mempty $ mapMaybe parseLine tail
   pure {scores, lastUpdated}
@@ -91,6 +89,9 @@ table { modes, scol, showEmpty, context, scores, time } =
   # doWhen showEmpty (append [[context]])
   <#> map (findScore scores time)
 
+classic ∷ ∀r i. String → HH.IProp (class ∷ String | r) i
+classic = HP.class_ ∘ H.ClassName
+
 leaderboard ∷ ∀w i. Array (Array (Either Mode Score)) → HH.HTML w i
 leaderboard tab =
   hush `mapMaybe` join tab
@@ -104,19 +105,19 @@ leaderboard tab =
     , HH.td_ [HH.text $ show score]
     ])
   # cons (HH.tr_ $ HH.th_ ∘ pure ∘ HH.text <$> ["rank","name","high scores","total points"])
-  # HH.table [ HP.class_ $ H.ClassName "scores" ]
+  # HH.table [classic "scores"]
 
 history ∷ ∀w i. State → Mode → HH.HTML w i
 history state mode =
   fold (HM.lookup mode state.scores)
   <#> (\{score,date,owner} → HH.tr
-    (if date > state.time then [HP.class_ $ H.ClassName "dark"] else [])
+    (if date > state.time then [classic "dark"] else [])
     [ HH.td [HP.style $ color owner] [HH.text $ owner]
     , HH.td_ [HH.text $ show score]
     , HH.td_ [HH.text $ showTime date]
     ])
   # cons (HH.tr_ $ HH.th_ ∘ pure ∘ HH.text <$> ["name","points","date"])
-  # HH.table [ HP.class_ $ H.ClassName "scores" ]
+  # HH.table [classic "scores"]
 
 color ∷ String → String
 --color "☭🐝" = "background-color:rgb(198,234,169)"
@@ -186,7 +187,7 @@ type State =
   , showEmpty ∷ Boolean
   , selection ∷ Maybe Mode
   , timerSid  ∷ Maybe H.SubscriptionId
-  , speed     ∷ Number
+  , speed     ∷ Int
   }
 
 rotate ∷ ∀a. Array a → Array a
@@ -205,7 +206,7 @@ initialState {scores,lastUpdated} =
   , showEmpty: true
   , selection: Nothing
   , timerSid:  Nothing
-  , speed:     10800.0
+  , speed:     432000
   }
 
 formatTime ∷ Instant → String
@@ -225,7 +226,7 @@ handleAction ∷ ∀o m. MonadAff m ⇒ Action → H.HalogenM State Action () o 
 handleAction = case _ of
   ToggleScol      → H.modify_ \x→ x {scol      = not x.scol     }
   ToggleShowEmpty → H.modify_ \x→ x {showEmpty = not x.showEmpty}
-  ChangeModes s   → H.modify_ _ {modes = Mode.fromString <$> split (Pattern " ") s}
+  ChangeModes s   → H.modify_ _ {modes = Mode.fromString <$> S.split (S.Pattern " ") s}
   ResetModes      → H.modify_ _ {modes = Mode.all}
   ChangeTime s    → doWhen (S.length s <= 16) (_⋄":00") s
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
@@ -239,21 +240,22 @@ handleAction = case _ of
   Unhover         → H.modify_ _ {selection = Nothing}
   StartTimer      →
     H.gets _.timerSid >>= maybe
-      (timer 25.0 >>= H.subscribe >>= \sid → H.modify_ _ { timerSid = Just sid })
+      (timer >>= H.subscribe >>= \sid → H.modify_ _ { timerSid = Just sid })
       (\x→H.unsubscribe x *> H.modify_ _ { timerSid = Nothing })
-  ChangeSpeed s   → maybe (pure unit) (\y→H.modify_ _ { speed = y }) (Number.fromString s)
-  Tick            → H.modify_ \x→ x {time = advanceTime x.speed x.lastUpdated x.time }
+  ChangeSpeed s   → maybe (pure unit) (\y→H.modify_ _ { speed = y }) (Int.fromString s)
+  Tick            → H.modify_ \x→ x {time = 
+                      advanceTime (Int.toNumber x.speed * period) x.lastUpdated x.time }
 
 addHeaders ∷ ∀w. State → Array (Array (HH.HTML w Action)) → Array (Array (HH.HTML w Action))
 addHeaders {scol, showEmpty, modes} =
   zipWith add $ doWhen showEmpty (cons ε) modes
     where add x = if scol then flip snoc $ head (if x ≡ ε then "right" else "diag") x
                           else cons $ head "left" x
-          head c x = HH.th [HP.class_ $ H.ClassName c, HE.onClick \_→AddContext x] [HH.text $ show x]
+          head c x = HH.th [classic c, HE.onClick \_→AddContext x] [HH.text $ show x]
 
 renderTable ∷ ∀w. Array (Array (Either Mode Score)) → State → HH.HTML w Action
 renderTable tab state =
-  HH.table [HP.class_ $ H.ClassName "y"] $
+  HH.table [classic "y"] $
     map HH.tr_ $ addHeaders state $ map makeCell <$> tab
 
 contextifyState ∷ State → State
@@ -289,8 +291,8 @@ render state =
       [ HH.text "modes: "
       , HH.input
         [ HP.type_ HP.InputText
-        , HP.class_ (H.ClassName "modes")
-        , HP.value $ joinWith " " $ show <$> state.modes
+        , classic "modes"
+        , HP.value $ S.joinWith " " $ show <$> state.modes
         , HE.onValueChange ChangeModes
         ]
       ]
@@ -317,13 +319,14 @@ render state =
       [HE.onClick \_→StartTimer]
       [HH.text if isNothing state.timerSid then "start" else "stop"]
     , HH.label_
-      [ HH.text " speed: "
+      [ HH.text " at "
       , HH.input
-        [ HP.type_ HP.InputText
-        , HP.class_ (H.ClassName "modes")
+        [ HP.type_ HP.InputNumber
         , HP.value $ show state.speed
         , HE.onValueChange ChangeSpeed
+        , classic "speed"
         ]
+      , HH.text " s⋅s⁻¹"
       ]
     , case state.selection of
         Just m → HH.div_ 
@@ -336,11 +339,14 @@ render state =
   where tab = table $ contextifyState state
         skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
 
-timer ∷ ∀m. MonadAff m ⇒ Number → m (HS.Emitter Action)
-timer tickSpeed = do
-  { emitter, listener } <- H.liftEffect HS.create
+period ∷ Number
+period = 1.0/60.0
+
+timer ∷ ∀m. MonadAff m ⇒ m (HS.Emitter Action)
+timer = do
+  { emitter, listener } ← H.liftEffect HS.create
   _ ← H.liftAff $ Aff.forkAff $ forever do
-    Aff.delay $ Milliseconds tickSpeed
+    Aff.delay $ Milliseconds period
     H.liftEffect $ HS.notify listener Tick
   pure emitter
 
