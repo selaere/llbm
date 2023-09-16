@@ -5,6 +5,7 @@
 /node_modules/
 /.pulp-cache/
 /output/
+/output-es/
 /generated-docs/
 /.psc-package/
 /.psc*
@@ -12,5 +13,6 @@
 /.psa*
 /.spago
 /main.js
+/index.js
 /high.txt
 /hist.txt

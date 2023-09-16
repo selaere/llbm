@@ -1,42 +1,32 @@
-{ inputs =
-    { nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-      ps-tools.follows = "purs-nix/ps-tools";
-      purs-nix.url = "github:purs-nix/purs-nix/ps-0.15";
-      utils.url = "github:numtide/flake-utils";
+{
+inputs = {
+  nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
+  flake-utils.url = "github:numtide/flake-utils";
+  easy-purescript-nix.url = "github:justinwoo/easy-purescript-nix";
+  bqnlibs.url = "https://github.com/mlochbaum/bqn-libs";
+  bqnlibs.flake = false;
+};
+
+outputs = { nixpkgs, flake-utils, easy-purescript-nix, bqnlibs, ... }:
+  flake-utils.lib.eachDefaultSystem (system:
+    let
+      pkgs = nixpkgs.legacyPackages.${system};
+      easy-ps = easy-purescript-nix.packages.${system};
+    in { devShells.default = pkgs.mkShell {
+      name = "purescript-custom-shell";
+      buildInputs = [
+        easy-ps.purs-0_15_10
+        easy-ps.spago
+        easy-ps.purs-backend-es
+        #easy-ps.purescript-language-server
+        #easy-ps.purs-tidy
+        #pkgs.nodejs-18_x
+        pkgs.esbuild
+      ];
+      shellHook = ''
+        source <(spago --bash-completion-script `which spago`)
+      '';
     };
-
-  outputs = { nixpkgs, utils, ... }@inputs:
-    utils.lib.eachSystem [ "x86_64-linux" "x86_64-darwin" ]
-      (system:
-        let
-
-          pkgs = nixpkgs.legacyPackages.${system};
-          #ps-tools = inputs.ps-tools.legacyPackages.${system};
-          purs-nix = inputs.purs-nix { inherit system; };
-
-          ps = purs-nix.purs {
-            dependencies = [
-              "console" "effect" "prelude" "bifunctors" "exceptions" "ursi.murmur3"
-              "affjax" "affjax-web" "strings" "partial" "unordered-collections" "formatters"
-              "halogen" "halogen-subscriptions"];
-            dir = ./.;
-          };
-        in {
-          packages.default = ps.bundle { esbuild.format = "iife"; };
-          devShells.default = pkgs.mkShell {
-            packages = with pkgs; [
-              entr
-              nodejs
-              (ps.command { bundle.esbuild.format = "iife"; })
-              #ps-tools.for-0_15.purescript-language-server
-              purs-nix.esbuild
-              purs-nix.purescript
-            ];
-            shellHook =
-              ''
-              alias watch="find src | entr -s 'echo bundling; purs-nix bundle'"
-              '';
-          };
-        }
-      );
+  }
+);
 }

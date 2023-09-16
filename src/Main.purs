@@ -43,7 +43,7 @@ import Halogen.VDom.Driver (runUI)
 import Main.Common (doWhen, (∘), (≡), (≢), (⋄), (⍪))
 import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
-import Murmur3 (hash)
+import Main.Murmur3 (hash)
 import Partial.Unsafe (unsafePartial)
 
 type Score =
@@ -119,9 +119,9 @@ history state mode =
   # HH.table [ HP.class_ $ H.ClassName "scores" ]
 
 color ∷ String → String
-color "☭🐝" = "background-color:rgb(198,234,169)" -- temporary (elm Murmur3 and ursi/purescript-murmur3 treat unicode differently)
-color name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%"
-  where h = hash 3054 name
+--color "☭🐝" = "background-color:rgb(198,234,169)"
+color name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%)"
+  where h = hash name 3054
         hue = h `mod` 360
         lgt = ((h `div` 360) `mod` 45) + 40
 

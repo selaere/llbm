@@ -1,0 +1,3 @@
+[submodule "node-murmurhash"]
+	path = murmurhash
+	url = https://github.com/perezd/node-murmurhash
