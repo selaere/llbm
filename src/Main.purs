@@ -13,7 +13,7 @@ import Data.Array (cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, so
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
-import Data.Either (Either(..), fromRight, hush, note)
+import Data.Either (Either(..), either, fromRight, hush, note)
 import Data.Foldable (fold)
 import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
 import Data.Function (on)
@@ -126,15 +126,33 @@ color name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%)"
         hue = h `mod` 360
         lgt = ((h `div` 360) `mod` 45) + 40
 
-makeCell' ∷ ∀w. Mode → HH.Node DOM.HTMLtd w Action
-makeCell' mode a = 
-  HH.td (a ⋄ [HE.onMouseEnter \_→Hover mode, HE.onMouseLeave \_→Unhover])
+-- this is written in a strange way bc we dont want this to be uncurried
+-- (i dont want to call findScore once for every cell)
+selectionClass ∷ State → Either Mode Score → String
+selectionClass {selection: SelectNothing} = \_→"sel"
+selectionClass {selection: SelectRow m  } = \x→
+  if m ∩ either identity _.mode x ≢ ε then "sel" else "unsel"
+selectionClass {scores, time, selection: SelectMode m} =
+  case findScore scores time m of
+    Left _ → \_→"unsel"
+    Right {owner, mode} → case _ of
+      Right {owner:owner'} | owner ≢ owner' → "unsel"
+      Right {mode: mode' } | mode  ≡ mode'  → "hover"
+      _ → "sel"
+
+makeCell' ∷ ∀w. String → Mode → HH.Node DOM.HTMLtd w Action
+makeCell' sel mode a = 
+  HH.td (a ⋄
+    [ classic sel
+    , HE.onMouseEnter \_→Select $ SelectMode mode
+    , HE.onMouseLeave \_→Select $ SelectNothing
+    ])
   ∘ pure
   ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
 
-makeCell ∷ ∀w. Either Mode Score → HH.HTML w Action
-makeCell (Left mode) = makeCell' mode [] [HH.text $ show mode]
-makeCell (Right {mode, score, owner, date}) = makeCell' mode
+makeCell ∷ ∀w. String → Either Mode Score → HH.HTML w Action
+makeCell sel (Left mode) = makeCell' sel mode [] [HH.text $ show mode]
+makeCell sel (Right {mode, score, owner, date}) = makeCell' sel mode
   [ HP.style $ color owner
   , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date
   ]
@@ -171,8 +189,7 @@ data Action =
   | ResetModes
   | AddContext Mode
   | ResetContext
-  | Hover Mode
-  | Unhover
+  | Select Selection
   | ChangeSpeed String
   | StartTimer
   | Tick
@@ -185,10 +202,15 @@ type State =
   , modes     ∷ Array Mode
   , scol      ∷ Boolean
   , showEmpty ∷ Boolean
-  , selection ∷ Maybe Mode
+  , selection ∷ Selection
   , timerSid  ∷ Maybe H.SubscriptionId
   , speed     ∷ Int
   }
+
+data Selection
+  = SelectNothing
+  | SelectMode Mode
+  | SelectRow Mode
 
 rotate ∷ ∀a. Array a → Array a
 rotate arr = case unsnoc arr of
@@ -204,7 +226,7 @@ initialState {scores,lastUpdated} =
   , modes:     Mode.all
   , scol:      false
   , showEmpty: true
-  , selection: Nothing
+  , selection: SelectNothing
   , timerSid:  Nothing
   , speed:     432000
   }
@@ -236,8 +258,7 @@ handleAction = case _ of
   ResetTime       → H.modify_ \x→ x {time = x.lastUpdated}
   AddContext m    → H.modify_ \x→ x {context = doWhen (m ≢ ε) (append x.context) m}
   ResetContext    → H.modify_ _ {context = ε}
-  Hover m         → H.modify_ _ {selection = Just m}
-  Unhover         → H.modify_ _ {selection = Nothing}
+  Select s        → H.modify_ _ {selection = s}
   StartTimer      →
     H.gets _.timerSid >>= maybe
       (timer >>= H.subscribe >>= \sid → H.modify_ _ { timerSid = Just sid })
@@ -251,12 +272,17 @@ addHeaders {scol, showEmpty, modes} =
   zipWith add $ doWhen showEmpty (cons ε) modes
     where add x = if scol then flip snoc $ head (if x ≡ ε then "right" else "diag") x
                           else cons $ head "left" x
-          head c x = HH.th [classic c, HE.onClick \_→AddContext x] [HH.text $ show x]
+          head c x = HH.th 
+            [ classic c
+            , HE.onClick \_→AddContext x
+            , HE.onMouseEnter \_→Select $ SelectRow x
+            , HE.onMouseLeave \_→Select $ SelectNothing] [HH.text $ show x]
 
 renderTable ∷ ∀w. Array (Array (Either Mode Score)) → State → HH.HTML w Action
 renderTable tab state =
+  let sel = selectionClass state in
   HH.table [classic "y"] $
-    map HH.tr_ $ addHeaders state $ map makeCell <$> tab
+    map HH.tr_ $ addHeaders state $ map (\m → makeCell (sel m) m) <$> tab
 
 contextifyState ∷ State → State
 contextifyState state@{context,modes} = state { modes =
@@ -329,10 +355,10 @@ render state =
       , HH.text " s⋅s⁻¹"
       ]
     , case state.selection of
-        Just m → HH.div_ 
+        SelectMode m → HH.div_ 
           [ HH.h3_ [ HH.text $ "high score history for mode "⋄ show m ]
           , history state m ]
-        Nothing → HH.text ""
+        _ → HH.text ""
     , HH.h3_ [ HH.text "leaderboard for current table" ]
     , leaderboard tab
     ]]
