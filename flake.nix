@@ -7,7 +7,7 @@ inputs = {
   #bqnlibs.flake = false;
 };
 
-outputs = { nixpkgs, flake-utils, easy-purescript-nix, bqnlibs, ... }:
+outputs = { nixpkgs, flake-utils, easy-purescript-nix, ... }:
   flake-utils.lib.eachDefaultSystem (system:
     let
       pkgs = nixpkgs.legacyPackages.${system};

@@ -14,7 +14,7 @@ import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
 import Data.Either (Either(..), either, fromRight, hush, note)
-import Data.Foldable (fold)
+import Data.Foldable (fold, traverse_)
 import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
 import Data.Function (on)
 import Data.HashMap (HashMap)
@@ -41,7 +41,7 @@ import Halogen.VDom.Driver (runUI)
 import Main.Common (doWhen, (∘), (≡), (≢), (⋄), (⍪))
 import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
-import Main.Murmur3 (hash)
+import Main.Murmur3 (hashString)
 import Partial.Unsafe (unsafePartial)
 
 type Score =
@@ -92,15 +92,15 @@ table { modes, scol, showEmpty, context, scores, time } =
 classic ∷ ∀r i. String → HH.IProp (class ∷ String | r) i
 classic = HP.class_ ∘ H.ClassName
 
-leaderboard ∷ ∀w i. Array (Array (Either Mode Score)) → HH.HTML w i
-leaderboard tab =
+leaderboard ∷ ∀w i. Int → Array (Array (Either Mode Score)) → HH.HTML w i
+leaderboard seed tab =
   hush `mapMaybe` join tab
   # foldl (\m i→HM.insertWith (join bilift2 (+)) i.owner (1 ⍪ max 0 i.score) m) HM.empty
   # HM.toArrayBy (⍪)
   # sortBy (on (flip compare) swap)
   # mapWithIndex (\i (name⍪no⍪score) → HH.tr_
     [ HH.td_ [HH.text $ show (i+1) ⋄ "."]
-    , HH.td [HP.style $ color name] [HH.text name]
+    , HH.td [HP.style $ color seed name] [HH.text name]
     , HH.td_ [HH.text $ show no]
     , HH.td_ [HH.text $ show score]
     ])
@@ -112,17 +112,17 @@ history state mode =
   fold (HM.lookup mode state.scores)
   <#> (\{score,date,owner} → HH.tr
     (if date > state.time then [classic "dark"] else [])
-    [ HH.td [HP.style $ color owner] [HH.text $ owner]
+    [ HH.td [HP.style $ color state.seed owner] [HH.text $ owner]
     , HH.td_ [HH.text $ show score]
     , HH.td_ [HH.text $ showTime date]
     ])
   # cons (HH.tr_ $ HH.th_ ∘ pure ∘ HH.text <$> ["name","points","date"])
   # HH.table [classic "scores"]
 
-color ∷ String → String
+color ∷ Int → String → String
 --color "☭🐝" = "background-color:rgb(198,234,169)"
-color name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%)"
-  where h = hash name 3054
+color seed name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%)"
+  where h = hashString name seed
         hue = h `mod` 360
         lgt = ((h `div` 360) `mod` 45) + 40
 
@@ -150,10 +150,10 @@ makeCell' sel mode a =
   ∘ pure
   ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
 
-makeCell ∷ ∀w. String → Either Mode Score → HH.HTML w Action
-makeCell sel (Left mode) = makeCell' sel mode [] [HH.text $ show mode]
-makeCell sel (Right {mode, score, owner, date}) = makeCell' sel mode
-  [ HP.style $ color owner
+makeCell ∷ ∀w. Int → String → Either Mode Score → HH.HTML w Action
+makeCell _    sel (Left mode) = makeCell' sel mode [] [HH.text $ show mode]
+makeCell seed sel (Right {mode, score, owner, date}) = makeCell' sel mode
+  [ HP.style $ color seed owner
   , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date
   ]
   [ HH.text $ show score
@@ -193,6 +193,7 @@ data Action =
   | ChangeSpeed String
   | StartTimer
   | Tick
+  | ChangeSeed String
 
 type State =
   { scores    ∷ HashMap Mode (Array Score)
@@ -205,6 +206,7 @@ type State =
   , selection ∷ Selection
   , timerSid  ∷ Maybe H.SubscriptionId
   , speed     ∷ Int
+  , seed      ∷ Int
   }
 
 data Selection
@@ -229,6 +231,7 @@ initialState {scores,lastUpdated} =
   , selection: SelectNothing
   , timerSid:  Nothing
   , speed:     432000
+  , seed:      3054
   }
 
 formatTime ∷ Instant → String
@@ -253,7 +256,7 @@ handleAction = case _ of
   ChangeTime s    → doWhen (S.length s <= 16) (_⋄":00") s
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
                     # hush <#> fromDateTime
-                    # maybe (pure unit) (\y→ H.modify_ _ {time = y})
+                    # traverse_ (\y→ H.modify_ _ {time = y})
   ChangeTimeBy n  → H.modify_ \x→ x {time = advanceTime n x.lastUpdated x.time }
   ResetTime       → H.modify_ \x→ x {time = x.lastUpdated}
   AddContext m    → H.modify_ \x→ x {context = doWhen (m ≢ ε) (append x.context) m}
@@ -263,9 +266,10 @@ handleAction = case _ of
     H.gets _.timerSid >>= maybe
       (timer >>= H.subscribe >>= \sid → H.modify_ _ { timerSid = Just sid })
       (\x→H.unsubscribe x *> H.modify_ _ { timerSid = Nothing })
-  ChangeSpeed s   → maybe (pure unit) (\y→H.modify_ _ { speed = y }) (Int.fromString s)
+  ChangeSpeed s   → traverse_ (\y→H.modify_ _ { speed = y }) $ Int.fromString s
   Tick            → H.modify_ \x→ x {time = 
                       advanceTime (Int.toNumber x.speed * period) x.lastUpdated x.time }
+  ChangeSeed s    → traverse_ (\i→H.modify_ _ {seed = i}) $ Int.fromString s
 
 addHeaders ∷ ∀w. State → Array (Array (HH.HTML w Action)) → Array (Array (HH.HTML w Action))
 addHeaders {scol, showEmpty, modes} =
@@ -279,10 +283,11 @@ addHeaders {scol, showEmpty, modes} =
             , HE.onMouseLeave \_→Select $ SelectNothing] [HH.text $ show x]
 
 renderTable ∷ ∀w. Array (Array (Either Mode Score)) → State → HH.HTML w Action
-renderTable tab state =
-  let sel = selectionClass state in
-  HH.table [classic "y"] $
-    map HH.tr_ $ addHeaders state $ map (\m → makeCell (sel m) m) <$> tab
+renderTable tab state = tab
+  <#> map (\m→ makeCell state.seed (selectionClass state m) m)
+  # addHeaders state
+  <#> HH.tr_
+  # HH.table [classic "y"]
 
 contextifyState ∷ State → State
 contextifyState state@{context,modes} = state { modes =
@@ -325,6 +330,15 @@ render state =
     , HH.button [HE.onClick \_→ResetModes] [HH.text "reset"]
     , HH.br_
     , HH.label_
+      [ HH.text "seed for colors: "
+      , HH.input
+        [ HP.type_ HP.InputNumber
+        , HP.value $ show state.seed
+        , HE.onValueChange ChangeSeed
+        ]
+      ]
+    , HH.br_
+    , HH.label_
       [ HH.text "date: "
       , HH.input
         [ HP.type_ HP.InputDatetimeLocal
@@ -334,10 +348,11 @@ render state =
         , HP.attr (H.AttrName "max") $ formatTime state.lastUpdated
         ]
       ]
-    , HH.button [HE.onClick \_→ResetTime] [HH.text "skip forward"]
+    , HH.button [HE.onClick \_→ResetTime] [HH.text "reset"]
     , HH.br_
     , skip (-365*86400) "-y" , skip ( -30*86400) "-30d", skip (  -7*86400) "-7d"
     , skip (    -86400) "-d" , skip (     -3600) "-h"
+    , HH.text " ⏪\xFE0E time travel ⏩\xFE0E "
     , skip (      3600) "+h" , skip (     86400) "+d"
     , skip (   7*86400) "+7d", skip (  30*86400) "+30d", skip ( 365*86400) "+y"
     , HH.br_
@@ -345,7 +360,7 @@ render state =
       [HE.onClick \_→StartTimer]
       [HH.text if isNothing state.timerSid then "start" else "stop"]
     , HH.label_
-      [ HH.text " at "
+      [ HH.text " timelapse at "
       , HH.input
         [ HP.type_ HP.InputNumber
         , HP.value $ show state.speed
@@ -360,7 +375,7 @@ render state =
           , history state m ]
         _ → HH.text ""
     , HH.h3_ [ HH.text "leaderboard for current table" ]
-    , leaderboard tab
+    , leaderboard state.seed tab
     ]]
   where tab = table $ contextifyState state
         skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
