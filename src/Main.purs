@@ -124,7 +124,7 @@ color ∷ Int → String → String
 color seed name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%)"
   where h = hashString name seed
         hue = h `mod` 360
-        lgt = ((h `div` 360) `mod` 45) + 40
+        lgt = (h `div` 360 `mod` 45 * 30) `div` 40 + 55
 
 -- this is written in a strange way bc we dont want this to be uncurried
 -- (i dont want to call findScore once for every cell)
@@ -136,9 +136,10 @@ selectionClass {scores, time, selection: SelectMode m} =
   case findScore scores time m of
     Left _ → \_→"unsel"
     Right {owner, mode} → case _ of
+      Left _ → "unsel"
       Right {owner:owner'} | owner ≢ owner' → "unsel"
       Right {mode: mode' } | mode  ≡ mode'  → "hover"
-      _ → "sel"
+      Right _ → "sel"
 
 makeCell' ∷ ∀w. String → Mode → HH.Node DOM.HTMLtd w Action
 makeCell' sel mode a = 
