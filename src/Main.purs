@@ -9,7 +9,7 @@ import Control.Biapply (bilift2)
 import Control.Monad.Error.Class (liftEither)
 import Control.Monad.Rec.Class (forever)
 import DOM.HTML.Indexed as DOM
-import Data.Array (cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
+import Data.Array (any, cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
@@ -55,11 +55,11 @@ score = {score: _, mode: _, date: _, owner: _}
 
 parseLine ∷ String → Maybe Score
 parseLine a = join (RE.match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
-  [s, m, d, o] -> score <$> (s >>= Int.fromString)
-                        <*> (m <#> Mode.fromString)
-                        <*> (d >>= Number.fromString <#> toInstant)
-                        <*> o
-  _ -> Nothing
+  [s, m, d, o] → score <$> (s >>= Int.fromString)
+                       <*> (m <#> Mode.fromString)
+                       <*> (d >>= Number.fromString <#> toInstant)
+                       <*> o
+  _ → Nothing
   where
     reg = hush $ RE.regex "^([^ ]*) ([^ ]*) ([^ ]*) (.*)$" mempty
 
@@ -92,9 +92,9 @@ table { modes, scol, showEmpty, context, scores, time } =
 classic ∷ ∀r i. String → HH.IProp (class ∷ String | r) i
 classic = HP.class_ ∘ H.ClassName
 
-leaderboard ∷ ∀w i. Int → Array (Array (Either Mode Score)) → HH.HTML w i
+leaderboard ∷ ∀w i. Int → Array (Either Mode Score) → HH.HTML w i
 leaderboard seed tab =
-  hush `mapMaybe` join tab
+  hush `mapMaybe` tab
   # foldl (\m i→HM.insertWith (join bilift2 (+)) i.owner (1 ⍪ max 0 i.score) m) HM.empty
   # HM.toArrayBy (⍪)
   # sortBy (on (flip compare) swap)
@@ -130,8 +130,11 @@ color seed name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄
 -- (i dont want to call findScore once for every cell)
 selectionClass ∷ State → Either Mode Score → String
 selectionClass {selection: SelectNothing} = \_→"sel"
-selectionClass {selection: SelectRow m  } = \x→
-  if m ∩ either identity _.mode x ≢ ε then "sel" else "unsel"
+selectionClass {context, modes, selection: SelectRow m  } =
+  (\x→if x then "sel" else "unsel")
+  ∘ (if m ≡ ε then \x→ any (\y→y ⋄ context ≡ x) modes
+              else \x→ x ∩ m ≢ context)
+  ∘ either identity _.mode
 selectionClass {scores, time, selection: SelectMode m} =
   case findScore scores time m of
     Left _ → \_→"unsel"
@@ -141,22 +144,21 @@ selectionClass {scores, time, selection: SelectMode m} =
       Right {mode: mode' } | mode  ≡ mode'  → "hover"
       Right _ → "sel"
 
-makeCell' ∷ ∀w. String → Mode → HH.Node DOM.HTMLtd w Action
-makeCell' sel mode a = 
+makeCell' ∷ ∀w. Mode → HH.Node DOM.HTMLtd w Action
+makeCell' mode a = 
   HH.td (a ⋄
-    [ classic sel
-    , HE.onMouseEnter \_→Select $ SelectMode mode
+    [ HE.onMouseEnter \_→Select $ SelectMode mode
     , HE.onMouseLeave \_→Select $ SelectNothing
     ])
   ∘ pure
   ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
 
 makeCell ∷ ∀w. Int → String → Either Mode Score → HH.HTML w Action
-makeCell _    sel (Left mode) = makeCell' sel mode [] [HH.text $ show mode]
-makeCell seed sel (Right {mode, score, owner, date}) = makeCell' sel mode
+makeCell _    sel (Left mode) = makeCell' mode [classic sel] [HH.text $ show mode]
+makeCell seed sel (Right {mode, score, owner, date}) = makeCell' mode
   [ HP.style $ color seed owner
   , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date
-  ]
+  , classic sel ]
   [ HH.text $ show score
   , HH.small_ [HH.text $ " " ⋄ show mode]
   , HH.br_
@@ -218,7 +220,7 @@ data Selection
 rotate ∷ ∀a. Array a → Array a
 rotate arr = case unsnoc arr of
   Just { init, last } → [last] ⋄ init
-  Nothing -> []
+  Nothing → []
 
 initialState ∷ File → State
 initialState {scores,lastUpdated} =
@@ -376,7 +378,7 @@ render state =
           , history state m ]
         _ → HH.text ""
     , HH.h3_ [ HH.text "leaderboard for current table" ]
-    , leaderboard state.seed tab
+    , leaderboard state.seed (join tab)
     ]]
   where tab = table $ contextifyState state
         skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
