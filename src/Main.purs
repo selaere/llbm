@@ -5,9 +5,11 @@ import Prelude
 import Affjax as AJ
 import Affjax.ResponseFormat (string)
 import Affjax.Web as AJW
+import Control.Alternative (guard)
 import Control.Biapply (bilift2)
 import Control.Monad.Error.Class (liftEither)
 import Control.Monad.Rec.Class (forever)
+import Control.Monad.State as St
 import DOM.HTML.Indexed as DOM
 import Data.Array (any, cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
@@ -17,15 +19,18 @@ import Data.Either (Either(..), either, fromRight, hush, note)
 import Data.Foldable (fold, traverse_)
 import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
 import Data.Function (on)
+import Data.Functor.Compose (Compose(..))
 import Data.HashMap (HashMap)
 import Data.HashMap as HM
+import Data.HashSet as HSet
 import Data.Int as Int
 import Data.Maybe (Maybe(..), fromJust, isNothing, maybe)
-import Data.Newtype (unwrap)
+import Data.Newtype (under, unwrap)
 import Data.Number as Number
 import Data.String as S
 import Data.String.Regex as RE
 import Data.Time.Duration (Milliseconds(..))
+import Data.Traversable (traverse)
 import Data.Tuple (swap)
 import Effect (Effect)
 import Effect.Aff as Aff
@@ -43,12 +48,17 @@ import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
 import Main.Murmur3 (hashString)
 import Partial.Unsafe (unsafePartial)
+import Record as Record
 
-type Score =
+type Score = ScoreWith ()
+type ScoreS = ScoreWith (stricken ∷ Boolean)
+
+type ScoreWith r = 
   { score ∷ Int
   , mode  ∷ Mode
   , date  ∷ Instant
-  , owner ∷ String }
+  , owner ∷ String
+  | r }
 
 score ∷ Int → Mode → Instant → String → Score
 score = {score: _, mode: _, date: _, owner: _}
@@ -60,8 +70,7 @@ parseLine a = join (RE.match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
                        <*> (d >>= Number.fromString <#> toInstant)
                        <*> o
   _ → Nothing
-  where
-    reg = hush $ RE.regex "^([^ ]*) ([^ ]*) ([^ ]*) (.*)$" mempty
+  where reg = hush $ RE.regex "^([^ ]*) ([^ ]*) ([^ ]*) (.*)$" mempty
 
 type File = { scores ∷ HashMap Mode (Array Score), lastUpdated ∷ Instant }
 
@@ -82,7 +91,7 @@ main = HA.runHalogenAff do
 
 table ∷ State → Array (Array (Either Mode Score))
 table { modes, scol, showEmpty, context, scores, time } =
-  1 .. (length modes)
+  1 .. length modes
   <#> take `flip` modes
   <#> doWhen scol rotate
   # zipWith (map ∘ append) modes
@@ -92,9 +101,9 @@ table { modes, scol, showEmpty, context, scores, time } =
 classic ∷ ∀r i. String → HH.IProp (class ∷ String | r) i
 classic = HP.class_ ∘ H.ClassName
 
-leaderboard ∷ ∀w i. Int → Array (Either Mode Score) → HH.HTML w i
-leaderboard seed tab =
-  hush `mapMaybe` tab
+leaderboard ∷ ∀w i. Int → Array (Either Mode ScoreS) → HH.HTML w i
+leaderboard seed tab = tab
+  # mapMaybe (hush >=> \x→x <$ guard (not x.stricken))
   # foldl (\m i→HM.insertWith (join bilift2 (+)) i.owner (1 ⍪ max 0 i.score) m) HM.empty
   # HM.toArrayBy (⍪)
   # sortBy (on (flip compare) swap)
@@ -128,7 +137,7 @@ color seed name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄
 
 -- this is written in a strange way bc we dont want this to be uncurried
 -- (i dont want to call findScore once for every cell)
-selectionClass ∷ State → Either Mode Score → String
+selectionClass ∷ ∀r. State → Either Mode (ScoreWith r) → String
 selectionClass {selection: SelectNothing} = \_→"sel"
 selectionClass {context, modes, selection: SelectRow m  } =
   (\x→if x then "sel" else "unsel")
@@ -153,12 +162,13 @@ makeCell' mode a =
   ∘ pure
   ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
 
-makeCell ∷ ∀w. Int → String → Either Mode Score → HH.HTML w Action
+makeCell ∷ ∀w. Int → String → Either Mode ScoreS → HH.HTML w Action
 makeCell _    sel (Left mode) = makeCell' mode [classic sel] [HH.text $ show mode]
-makeCell seed sel (Right {mode, score, owner, date}) = makeCell' mode
+makeCell seed sel (Right {mode, score, owner, date, stricken}) = makeCell' mode
   [ HP.style $ color seed owner
   , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date
-  , classic sel ]
+  , HP.classes $ doWhen stricken (_⋄[H.ClassName "stricken"]) [ H.ClassName sel ]
+  ]
   [ HH.text $ show score
   , HH.small_ [HH.text $ " " ⋄ show mode]
   , HH.br_
@@ -285,20 +295,29 @@ addHeaders {scol, showEmpty, modes} =
             , HE.onMouseEnter \_→Select $ SelectRow x
             , HE.onMouseLeave \_→Select $ SelectNothing] [HH.text $ show x]
 
-renderTable ∷ ∀w. Array (Array (Either Mode Score)) → State → HH.HTML w Action
-renderTable tab state = tab
+-- writing imperative code in functional languages is so fun
+strike
+  ∷ Array (Array (Either Mode Score))
+  → Array (Array (Either Mode ScoreS))
+strike = under Compose $ under Compose $ flip St.evalState HSet.empty ∘ traverse \cell→ do
+  opt ← St.gets (HSet.member cell.mode)
+  unless opt (St.modify_ (HSet.insert cell.mode))
+  pure $ Record.merge cell { stricken: opt }
+
+renderTable ∷ ∀w. State → Array (Array (Either Mode ScoreS)) → HH.HTML w Action
+renderTable state tab = tab
   <#> map (\m→ makeCell state.seed (selectionClass state m) m)
   # addHeaders state
   <#> HH.tr_
   # HH.table [classic "y"]
 
-contextifyState ∷ State → State
-contextifyState state@{context,modes} = state { modes =
+contextify ∷ State → State
+contextify state@{context,modes} = state { modes =
   append context <$> filter (\x→ x ∩ context ≡ ε) modes }
 
 render ∷ ∀w. State → HH.HTML w Action
 render state =
-  HH.div_ $ flip append [HH.main_ [ renderTable tab $ contextifyState state ]] [HH.nav_
+  HH.div_ $ flip append [HH.main_ [ renderTable (contextify state) tab ]] [HH.nav_
     [ HH.h2_ [HH.text ",leader lead board man? (llbm)"]
     , HH.p_ [HH.text $ "click on a score to play. click on a gamemode to see more. scores last updated "⋄ showTime state.lastUpdated ⋄" (UTC+00:00)."]
     , if state.context ≢ ε then HH.p_
@@ -380,7 +399,7 @@ render state =
     , HH.h3_ [ HH.text "leaderboard for current table" ]
     , leaderboard state.seed (join tab)
     ]]
-  where tab = table $ contextifyState state
+  where tab = strike (table (contextify state))
         skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
 
 period ∷ Number
