@@ -139,7 +139,7 @@ color seed name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄
 -- (i dont want to call findScore once for every cell)
 selectionClass ∷ ∀r. State → Either Mode (ScoreWith r) → String
 selectionClass {selection: SelectNothing} = \_→"sel"
-selectionClass {context, modes, selection: SelectRow m  } =
+selectionClass {context, modes, selection: SelectRow m} =
   (\x→if x then "sel" else "unsel")
   ∘ (if m ≡ ε then \x→ any (\y→y ⋄ context ≡ x) modes
               else \x→ x ∩ m ≢ context)
@@ -199,6 +199,7 @@ data Action =
   | ChangeTimeBy Number
   | ResetTime
   | ChangeModes String
+  | DisableModes String
   | ResetModes
   | AddContext Mode
   | ResetContext
@@ -214,6 +215,7 @@ type State =
   , time      ∷ Instant
   , context   ∷ Mode
   , modes     ∷ Array Mode
+  , disabledModes ∷ Array Mode
   , scol      ∷ Boolean
   , showEmpty ∷ Boolean
   , selection ∷ Selection
@@ -239,6 +241,7 @@ initialState {scores,lastUpdated} =
   , context:   ε
   , time:      lastUpdated
   , modes:     Mode.all
+  , disabledModes: []
   , scol:      false
   , showEmpty: true
   , selection: SelectNothing
@@ -265,6 +268,7 @@ handleAction = case _ of
   ToggleScol      → H.modify_ \x→ x {scol      = not x.scol     }
   ToggleShowEmpty → H.modify_ \x→ x {showEmpty = not x.showEmpty}
   ChangeModes s   → H.modify_ _ {modes = Mode.fromString <$> S.split (S.Pattern " ") s}
+  DisableModes s  → H.modify_ _ {disabledModes = filter (_ ≢ ε) $ Mode.fromString <$> S.split (S.Pattern " ") s}
   ResetModes      → H.modify_ _ {modes = Mode.all}
   ChangeTime s    → doWhen (S.length s <= 16) (_⋄":00") s
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
@@ -297,12 +301,16 @@ addHeaders {scol, showEmpty, modes} =
 
 -- writing imperative code in functional languages is so fun
 strike
-  ∷ Array (Array (Either Mode Score))
+  ∷ Array Mode
+  → Array (Array (Either Mode Score))
   → Array (Array (Either Mode ScoreS))
-strike = under Compose $ under Compose $ flip St.evalState HSet.empty ∘ traverse \cell→ do
-  opt ← St.gets (HSet.member cell.mode)
-  unless opt (St.modify_ (HSet.insert cell.mode))
-  pure $ Record.merge cell { stricken: opt }
+strike disabled =
+  under Compose $ under Compose $ flip St.evalState HSet.empty ∘ traverse \cell→ do
+    opt ← if any (\x→x ⋄ cell.mode ≡ cell.mode) disabled
+          then pure true
+          else St.gets (HSet.member cell.mode)
+    unless opt (St.modify_ (HSet.insert cell.mode))
+    pure $ Record.merge cell { stricken: opt }
 
 renderTable ∷ ∀w. State → Array (Array (Either Mode ScoreS)) → HH.HTML w Action
 renderTable state tab = tab
@@ -391,6 +399,16 @@ render state =
         ]
       , HH.text " s⋅s⁻¹"
       ]
+    , HH.br_
+    , HH.label_
+      [ HH.text "disabled modes: "
+      , HH.input
+        [ HP.type_ HP.InputText
+        , HP.placeholder "t md"
+        , HP.value $ S.joinWith " " $ show <$> state.disabledModes
+        , HE.onValueChange DisableModes
+        ]
+      ]
     , case state.selection of
         SelectMode m → HH.div_ 
           [ HH.h3_ [ HH.text $ "high score history for mode "⋄ show m ]
@@ -399,7 +417,7 @@ render state =
     , HH.h3_ [ HH.text "leaderboard for current table" ]
     , leaderboard state.seed (join tab)
     ]]
-  where tab = strike (table (contextify state))
+  where tab = strike state.disabledModes (table (contextify state))
         skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
 
 period ∷ Number
