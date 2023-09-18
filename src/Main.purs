@@ -109,7 +109,7 @@ leaderboard seed tab = tab
   # sortBy (on (flip compare) swap)
   # mapWithIndex (\i (name⍪no⍪score) → HH.tr_
     [ HH.td_ [HH.text $ show (i+1) ⋄ "."]
-    , HH.td [HP.style $ color seed name] [HH.text name]
+    , HH.td [HP.style $ colorName seed name] [HH.text name]
     , HH.td_ [HH.text $ show no]
     , HH.td_ [HH.text $ show score]
     ])
@@ -121,19 +121,29 @@ history state mode =
   fold (HM.lookup mode state.scores)
   <#> (\{score,date,owner} → HH.tr
     (if date > state.time then [classic "dark"] else [])
-    [ HH.td [HP.style $ color state.seed owner] [HH.text $ owner]
+    [ HH.td [HP.style $ colorName state.seed owner] [HH.text $ owner]
     , HH.td_ [HH.text $ show score]
     , HH.td_ [HH.text $ showTime date]
     ])
   # cons (HH.tr_ $ HH.th_ ∘ pure ∘ HH.text <$> ["name","points","date"])
   # HH.table [classic "scores"]
 
-color ∷ Int → String → String
+hsl ∷ Int → Int → Int → String
+hsl h s l = "background-color:hsl("⋄show h⋄","⋄show s⋄"%,"⋄show l⋄"%)"
+
+colorName ∷ Int → String → String
 --color "☭🐝" = "background-color:rgb(198,234,169)"
-color seed name = "background-color:hsl("⋄ show hue ⋄",60%,"⋄ show lgt ⋄"%)"
+colorName seed name = hsl (h `mod` 360) 60 ((h `div` 360 `mod` 45 * 30) `div` 40 + 55)
   where h = hashString name seed
-        hue = h `mod` 360
-        lgt = (h `div` 360 `mod` 45 * 30) `div` 40 + 55
+
+data Coloring = ByName | ByDate
+derive instance Eq Coloring
+color ∷ ∀r. Coloring → Int → ScoreWith r → String
+color ByName seed score = colorName seed score.owner
+color ByDate _    score = hsl hue 60 (Int.floor lig)
+  where hue = (secs - 1577836800) `div` 500000 `max` -20
+        lig = 95.0 - Number.log (Int.toNumber $ score.score + 5) * 45.0 / Number.log 1005.0
+        secs = Int.floor (unwrap (unInstant score.date) / 1000.0)
 
 -- this is written in a strange way bc we dont want this to be uncurried
 -- (i dont want to call findScore once for every cell)
@@ -162,17 +172,17 @@ makeCell' mode a =
   ∘ pure
   ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
 
-makeCell ∷ ∀w. Int → String → Either Mode ScoreS → HH.HTML w Action
-makeCell _    sel (Left mode) = makeCell' mode [classic sel] [HH.text $ show mode]
-makeCell seed sel (Right {mode, score, owner, date, stricken}) = makeCell' mode
-  [ HP.style $ color seed owner
-  , HP.title $ owner⋄" "⋄ show score ⋄" in "⋄ show mode ⋄" at "⋄ showTime date
-  , HP.classes $ doWhen stricken (_⋄[H.ClassName "stricken"]) [ H.ClassName sel ]
+makeCell ∷ ∀w. Int → Coloring → String → Either Mode ScoreS → HH.HTML w Action
+makeCell _    _        sel (Left mode) = makeCell' mode [classic sel] [HH.text $ show mode]
+makeCell seed coloring sel (Right s  ) = makeCell' s.mode
+  [ HP.style $ color coloring seed s
+  , HP.title $ s.owner⋄" "⋄ show s.score ⋄" in "⋄ show s.mode ⋄" at "⋄ showTime s.date
+  , HP.classes $ doWhen s.stricken (_⋄[H.ClassName "stricken"]) [ H.ClassName sel ]
   ]
-  [ HH.text $ show score
-  , HH.small_ [HH.text $ " " ⋄ show mode]
+  [ HH.text $ show s.score
+  , HH.small_ [HH.text $ " " ⋄ show s.mode]
   , HH.br_
-  , HH.small_ [HH.text owner]
+  , HH.small_ [HH.text s.owner]
   ]
 
 search ∷ ∀i. (i → Boolean) → Array i → Int
@@ -208,6 +218,7 @@ data Action =
   | StartTimer
   | Tick
   | ChangeSeed String
+  | ChangeColoring Coloring
 
 type State =
   { scores    ∷ HashMap Mode (Array Score)
@@ -222,6 +233,7 @@ type State =
   , timerSid  ∷ Maybe H.SubscriptionId
   , speed     ∷ Int
   , seed      ∷ Int
+  , coloring  ∷ Coloring
   }
 
 data Selection
@@ -248,6 +260,7 @@ initialState {scores,lastUpdated} =
   , timerSid:  Nothing
   , speed:     432000
   , seed:      3054
+  , coloring:  ByName
   }
 
 formatTime ∷ Instant → String
@@ -287,6 +300,7 @@ handleAction = case _ of
   Tick            → H.modify_ \x→ x {time = 
                       advanceTime (Int.toNumber x.speed * period) x.lastUpdated x.time }
   ChangeSeed s    → traverse_ (\i→H.modify_ _ {seed = i}) $ Int.fromString s
+  ChangeColoring c→ H.modify_ _ {coloring = c}
 
 addHeaders ∷ ∀w. State → Array (Array (HH.HTML w Action)) → Array (Array (HH.HTML w Action))
 addHeaders {scol, showEmpty, modes} =
@@ -314,7 +328,7 @@ strike disabled =
 
 renderTable ∷ ∀w. State → Array (Array (Either Mode ScoreS)) → HH.HTML w Action
 renderTable state tab = tab
-  <#> map (\m→ makeCell state.seed (selectionClass state m) m)
+  <#> map (\m→ makeCell state.seed state.coloring (selectionClass state m) m)
   # addHeaders state
   <#> HH.tr_
   # HH.table [classic "y"]
@@ -367,7 +381,27 @@ render state =
         , HE.onValueChange ChangeSeed
         ]
       ]
-    , HH.br_
+    , HH.div_
+      [ HH.text "color according to:"
+      , HH.label_
+        [ HH.input 
+          [ HP.type_ HP.InputRadio
+          , HP.id "coloring"
+          , HP.checked $ state.coloring ≡ ByName
+          , HE.onClick \_→ChangeColoring ByName
+          ]
+        , HH.text "by name"
+        ]
+      , HH.label_
+        [ HH.input 
+          [ HP.type_ HP.InputRadio
+          , HP.id "coloring"
+          , HP.checked $ state.coloring ≡ ByDate
+          , HE.onClick \_→ChangeColoring ByDate
+          ]
+        , HH.text "by date + score"
+        ]
+      ]
     , HH.label_
       [ HH.text "date: "
       , HH.input
