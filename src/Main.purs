@@ -348,101 +348,80 @@ render state =
       , HH.text ". "
       , HH.button [ HE.onClick \_→ResetContext ] [HH.text "reset"]
       ] else HH.text ""
-    , HH.label_
-      [ HH.input [ HP.type_ HP.InputCheckbox
-                 , HP.checked state.scol
-                 , HE.onClick \_→ToggleScol]
-      , HH.text "single column one line"
-      ]
-    , HH.br_
-    , HH.label_
-      [ HH.input [ HP.type_ HP.InputCheckbox
-                 , HP.checked state.showEmpty
-                 , HE.onClick \_→ToggleShowEmpty]
-      , HH.text "show empty score (ε)"
-      ]
-    , HH.br_
-    , HH.label_
-      [ HH.text "modes: "
-      , HH.input
-        [ HP.type_ HP.InputText
-        , classic "modes"
-        , HP.value $ S.joinWith " " $ show <$> state.modes
-        , HE.onValueChange ChangeModes
-        ]
-      ]
-    , HH.button [HE.onClick \_→ResetModes] [HH.text "reset"]
-    , HH.br_
-    , HH.label_
-      [ HH.text "seed for colors: "
-      , HH.input
-        [ HP.type_ HP.InputNumber
-        , HP.value $ show state.seed
-        , HE.onValueChange ChangeSeed
-        ]
-      ]
-    , HH.div_
-      [ HH.text "color according to:"
-      , HH.label_
-        [ HH.input 
+    , details [HH.text "table settings"]
+      [ labeled "" "diagonal headers"
+        [ HP.type_ HP.InputCheckbox
+        , HP.checked state.scol
+        , HE.onClick \_→ToggleScol]
+      , HH.br_
+      , labeled "" "show empty score"
+        [ HP.type_ HP.InputCheckbox
+        , HP.checked state.showEmpty
+        , HE.onClick \_→ToggleShowEmpty]
+      , HH.br_
+      , HH.div_
+        [ HH.text "color cells"
+        , labeled "" "by name"
           [ HP.type_ HP.InputRadio
           , HP.id "coloring"
           , HP.checked $ state.coloring ≡ ByName
           , HE.onClick \_→ChangeColoring ByName
           ]
-        , HH.text "by name"
-        ]
-      , HH.label_
-        [ HH.input 
+        , labeled "" "by date and score"
           [ HP.type_ HP.InputRadio
           , HP.id "coloring"
           , HP.checked $ state.coloring ≡ ByDate
           , HE.onClick \_→ChangeColoring ByDate
           ]
-        , HH.text "by date + score"
         ]
-      ]
-    , HH.label_
-      [ HH.text "date: "
-      , HH.input
-        [ HP.type_ HP.InputDatetimeLocal
-        , HP.value $ formatTime state.time
-        , HE.onValueChange ChangeTime
-        , HP.attr (H.AttrName "step") "1"
-        , HP.attr (H.AttrName "max") $ formatTime state.lastUpdated
-        ]
-      ]
-    , HH.button [HE.onClick \_→ResetTime] [HH.text "reset"]
-    , HH.br_
-    , skip (-365*86400) "-y" , skip ( -30*86400) "-30d", skip (  -7*86400) "-7d"
-    , skip (    -86400) "-d" , skip (     -3600) "-h"
-    , HH.text " ⏪\xFE0E time travel ⏩\xFE0E "
-    , skip (      3600) "+h" , skip (     86400) "+d"
-    , skip (   7*86400) "+7d", skip (  30*86400) "+30d", skip ( 365*86400) "+y"
-    , HH.br_
-    , HH.button 
-      [HE.onClick \_→StartTimer]
-      [HH.text if isNothing state.timerSid then "start" else "stop"]
-    , HH.label_
-      [ HH.text " timelapse at "
-      , HH.input
+      , labeled "color seed: " ""
         [ HP.type_ HP.InputNumber
-        , HP.value $ show state.speed
-        , HE.onValueChange ChangeSpeed
-        , classic "speed"
+        , HP.value $ show state.seed
+        , HE.onValueChange ChangeSeed
         ]
-      , HH.text " s⋅s⁻¹"
-      ]
-    , HH.br_
-    , HH.label_
-      [ HH.text "disabled modes: "
-      , HH.input
+      , HH.br_
+      , labeled "modes: " ""
+        [ HP.type_ HP.InputText
+        , classic "modes"
+        , HP.value $ S.joinWith " " $ show <$> state.modes
+        , HE.onValueChange ChangeModes
+        ]
+      , HH.button [HE.onClick \_→ResetModes] [HH.text "reset"]
+      , HH.br_
+      , labeled "disabled modes: " ""
         [ HP.type_ HP.InputText
         , HP.placeholder "t md"
         , HP.value $ S.joinWith " " $ show <$> state.disabledModes
         , HE.onValueChange DisableModes
         ]
       ]
+    , details [HH.text "history"]
+      [ labeled "date: " ""
+        [ HP.type_ HP.InputDatetimeLocal
+        , HP.value $ formatTime state.time
+        , HE.onValueChange ChangeTime
+        , HP.attr (H.AttrName "step") "1"
+        , HP.attr (H.AttrName "max") $ formatTime state.lastUpdated
+        ]
+      , HH.button [HE.onClick \_→ResetTime] [HH.text "reset"]
+      , HH.br_
+      , skip (-365*86400) "-y" , skip ( -30*86400) "-30d", skip (  -7*86400) "-7d"
+      , skip (    -86400) "-d" , skip (     -3600) "-h"
+      , HH.text " ⏪\xFE0E time travel ⏩\xFE0E "
+      , skip (      3600) "+h" , skip (     86400) "+d"
+      , skip (   7*86400) "+7d", skip (  30*86400) "+30d", skip ( 365*86400) "+y"
+      , HH.br_
+      , HH.button 
+        [HE.onClick \_→StartTimer]
+        [HH.text if isNothing state.timerSid then "start" else "stop"]
+      , labeled " timelapse at " " s⋅s⁻¹"
+        [ HP.type_ HP.InputNumber
+        , HP.value $ show state.speed
+        , HE.onValueChange ChangeSpeed
+        , classic "speed"
+        ]
+      ]
+    , HH.br_
     , case state.selection of
         SelectMode m → HH.div_ 
           [ HH.h3_ [ HH.text $ "high score history for mode "⋄ show m ]
@@ -453,6 +432,8 @@ render state =
     ]]
   where tab = strike state.disabledModes (table (contextify state))
         skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
+        labeled pre post props = HH.label_ [HH.text pre, HH.input props, HH.text post]
+        details s x = HH.details [HP.attr (H.AttrName "open") ""] [HH.summary_ s, HH.div_ x]
 
 period ∷ Number
 period = 1.0/60.0
