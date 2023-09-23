@@ -15,8 +15,8 @@ import Data.Array (any, cons, filter, foldl, length, mapMaybe, mapWithIndex, sno
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
-import Data.Either (Either(..), either, fromRight, hush, note)
-import Data.Foldable (fold, traverse_)
+import Data.Either (Either(..), either, fromRight, hush, isLeft, note)
+import Data.Foldable (fold, sum, traverse_)
 import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
 import Data.Function (on)
 import Data.Functor.Compose (Compose(..))
@@ -43,7 +43,7 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
 import Halogen.VDom.Driver (runUI)
-import Main.Common (doWhen, (∘), (≡), (≢), (⋄), (⍪))
+import Main.Common (type (⍪), bool, doWhen, (<<#>>), (∘), (≡), (≢), (⋄), (⍪))
 import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
 import Main.Murmur3 (hashString)
@@ -101,21 +101,32 @@ table { modes, scol, showEmpty, context, scores, time } =
 classic ∷ ∀r i. String → HH.IProp (class ∷ String | r) i
 classic = HP.class_ ∘ H.ClassName
 
-leaderboard ∷ ∀w i. Int → Array (Either Mode ScoreS) → HH.HTML w i
-leaderboard seed tab = tab
-  # mapMaybe (hush >=> \x→x <$ guard (not x.stricken))
-  # foldl (\m i→HM.insertWith (join bilift2 (+)) i.owner (1 ⍪ max 0 i.score) m) HM.empty
-  # HM.toArrayBy (⍪)
-  # sortBy (on (flip compare) swap)
-  # mapWithIndex (\i (name⍪no⍪score) → HH.tr_
-    [ HH.td_ [HH.text $ show (i+1) ⋄ "."]
-    , HH.td [HP.style $ colorName seed name] [HH.text name]
-    , HH.td_ [HH.text $ show no]
-    , HH.td_ [HH.text $ show score]
-    ])
-  # cons (HH.tr_ $ HH.th_ ∘ pure ∘ HH.text <$> ["rank","name","high scores","total points"])
-  # HH.table [classic "scores"]
+data Leaderboard = Leaderboard
+  { scores ∷ Int, unclaimed ∷ Int, ignored ∷ Int, lb ∷ Array (String⍪Int⍪Int) }
+leaderboard ∷ Array (Either Mode ScoreS) → Leaderboard
+leaderboard tab = Leaderboard
+  { lb: tab
+    # mapMaybe (hush >=> \x→x <$ guard (not x.stricken))
+    # foldl (\m i→HM.insertWith (join bilift2 (+)) i.owner (1 ⍪ max 0 i.score) m) HM.empty
+    # HM.toArrayBy (⍪)
+    # sortBy (on (flip compare) swap)
+  , scores:  sum $ bool 1 0 ∘ _.stricken <$> Compose tab
+  , unclaimed: sum $ bool 0 1 ∘ isLeft     <$>         tab
+  , ignored: sum $ bool 0 1 ∘ _.stricken <$> Compose tab }
 
+renderLeaderboard ∷ ∀w i. Int → Leaderboard → HH.HTML w i
+renderLeaderboard seed (Leaderboard {scores,unclaimed,ignored,lb}) = HH.div_ [HH.text label, table]
+  where
+    label = show scores⋄" scores, "⋄show unclaimed⋄" unclaimed, "⋄show ignored⋄" ignored"
+    table = mapWithIndex (\i (name⍪no⍪score) → HH.tr_
+      [ HH.td_ [HH.text $ show (i+1) ⋄ "."]
+      , HH.td [HP.style $ colorName seed name] [HH.text name]
+      , HH.td_ [HH.text $ show no]
+      , HH.td_ [HH.text $ show score]
+      ]) lb
+      # cons (HH.tr_ $ HH.th_ ∘ pure ∘ HH.text <$> ["rank","name","high scores","total points"])
+      # HH.table [classic "scores"]
+  
 history ∷ ∀w i. State → Mode → HH.HTML w i
 history state mode =
   fold (HM.lookup mode state.scores)
@@ -234,6 +245,8 @@ type State =
   , speed     ∷ Int
   , seed      ∷ Int
   , coloring  ∷ Coloring
+  , mTab      ∷ Array (Array (Either Mode ScoreS))
+  , mLeaderboard ∷ Leaderboard
   }
 
 data Selection
@@ -246,21 +259,21 @@ rotate arr = case unsnoc arr of
   Just { init, last } → [last] ⋄ init
   Nothing → []
 
+updateTab ∷ State → State
+updateTab state = state {mTab = strike state.disabledModes (table (contextify state)) }
+-- this will be invoked by most actions, but NOT Select, so that we can have (hopefully) smoother hovering
+updateLb ∷ State → State
+updateLb = (\state→ state { mLeaderboard = leaderboard (join state.mTab) } ) ∘ updateTab
+
 initialState ∷ File → State
 initialState {scores,lastUpdated} =
-  { scores
-  , lastUpdated
-  , context:   ε
-  , time:      lastUpdated
-  , modes:     Mode.all
-  , disabledModes: []
-  , scol:      false
-  , showEmpty: true
-  , selection: SelectNothing
-  , timerSid:  Nothing
-  , speed:     432000
-  , seed:      3054
-  , coloring:  ByName
+  updateLb
+  { scores             , lastUpdated        , time:      lastUpdated
+  , modes:     Mode.all, disabledModes: [], context: ε
+  , scol:      false   , showEmpty: true  , selection: SelectNothing
+  , timerSid:  Nothing , speed:     432000
+  , seed:      3054    , coloring:  ByName
+  , mTab:      [[]]    , mLeaderboard: leaderboard [] -- these will be replaced immediately
   }
 
 formatTime ∷ Instant → String
@@ -278,26 +291,26 @@ advanceTime n now time = min now $ toInstant $ n + unwrap (unInstant time) / 100
 
 handleAction ∷ ∀o m. MonadAff m ⇒ Action → H.HalogenM State Action () o m Unit
 handleAction = case _ of
-  ToggleScol      → H.modify_ \x→ x {scol      = not x.scol     }
-  ToggleShowEmpty → H.modify_ \x→ x {showEmpty = not x.showEmpty}
-  ChangeModes s   → H.modify_ _ {modes = Mode.fromString <$> S.split (S.Pattern " ") s}
-  DisableModes s  → H.modify_ _ {disabledModes = filter (_ ≢ ε) $ Mode.fromString <$> S.split (S.Pattern " ") s}
-  ResetModes      → H.modify_ _ {modes = Mode.all}
+  ToggleScol      → H.modify_ \x→ updateLb  x {scol      = not x.scol     }
+  ToggleShowEmpty → H.modify_ \x→ updateTab x {showEmpty = not x.showEmpty}
+  ChangeModes s   → H.modify_ $ updateLb ∘ _ {modes = Mode.fromString <$> S.split (S.Pattern " ") s}
+  DisableModes s  → H.modify_ $ updateLb ∘ _ {disabledModes = filter (_ ≢ ε) $ Mode.fromString <$> S.split (S.Pattern " ") s}
+  ResetModes      → H.modify_ $ updateLb ∘ _ {modes = Mode.all}
   ChangeTime s    → doWhen (S.length s <= 16) (_⋄":00") s
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
                     # hush <#> fromDateTime
-                    # traverse_ (\y→ H.modify_ _ {time = y})
-  ChangeTimeBy n  → H.modify_ \x→ x {time = advanceTime n x.lastUpdated x.time }
-  ResetTime       → H.modify_ \x→ x {time = x.lastUpdated}
-  AddContext m    → H.modify_ \x→ x {context = doWhen (m ≢ ε) (append x.context) m}
-  ResetContext    → H.modify_ _ {context = ε}
+                    # traverse_ (\y→ H.modify_ $ updateLb ∘ _ {time = y})
+  ChangeTimeBy n  → H.modify_ \x→ updateLb x {time = advanceTime n x.lastUpdated x.time }
+  ResetTime       → H.modify_ \x→ updateLb x {time = x.lastUpdated}
+  AddContext m    → H.modify_ \x→ updateLb x {context = doWhen (m ≢ ε) (append x.context) m}
+  ResetContext    → H.modify_ $ updateLb ∘ _ {context = ε}
   Select s        → H.modify_ _ {selection = s}
   StartTimer      →
     H.gets _.timerSid >>= maybe
       (timer >>= H.subscribe >>= \sid → H.modify_ _ { timerSid = Just sid })
       (\x→H.unsubscribe x *> H.modify_ _ { timerSid = Nothing })
   ChangeSpeed s   → traverse_ (\y→H.modify_ _ { speed = y }) $ Int.fromString s
-  Tick            → H.modify_ \x→ x {time = 
+  Tick            → H.modify_ $ updateLb ∘ \x→ x {time = 
                       advanceTime (Int.toNumber x.speed * period) x.lastUpdated x.time }
   ChangeSeed s    → traverse_ (\i→H.modify_ _ {seed = i}) $ Int.fromString s
   ChangeColoring c→ H.modify_ _ {coloring = c}
@@ -328,7 +341,7 @@ strike disabled =
 
 renderTable ∷ ∀w. State → Array (Array (Either Mode ScoreS)) → HH.HTML w Action
 renderTable state tab = tab
-  <#> map (\m→ makeCell state.seed state.coloring (selectionClass state m) m)
+  <<#>> (\m→ makeCell state.seed state.coloring (selectionClass state m) m)
   # addHeaders state
   <#> HH.tr_
   # HH.table [classic "y"]
@@ -339,7 +352,7 @@ contextify state@{context,modes} = state { modes =
 
 render ∷ ∀w. State → HH.HTML w Action
 render state =
-  HH.div_ $ flip append [HH.main_ [ renderTable (contextify state) tab ]] [HH.nav_
+  HH.div_ $ flip append [HH.main_ [ renderTable (contextify state) state.mTab ]] [HH.nav_
     [ HH.h2_ [HH.text ",leader lead board man? (llbm)"]
     , HH.p_ [HH.text $ "click on a score to play. click on a gamemode to see more. scores last updated "⋄ showTime state.lastUpdated ⋄" (UTC+00:00)."]
     , if state.context ≢ ε then HH.p_
@@ -428,10 +441,9 @@ render state =
           , history state m ]
         _ → HH.text ""
     , HH.h3_ [ HH.text "leaderboard for current table" ]
-    , leaderboard state.seed (join tab)
+    , renderLeaderboard state.seed state.mLeaderboard
     ]]
-  where tab = strike state.disabledModes (table (contextify state))
-        skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
+  where skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
         labeled pre post props = HH.label_ [HH.text pre, HH.input props, HH.text post]
         details s x = HH.details [HP.attr (H.AttrName "open") ""] [HH.summary_ s, HH.div_ x]
 
