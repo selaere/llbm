@@ -366,7 +366,7 @@ render ∷ ∀w. State → HH.HTML w Action
 render state =
   HH.div_ $ flip append [HH.main_ [ renderTable (contextify state) state.mTab ]] [HH.nav_
     [ HH.h2_ [HH.text ",leader lead board man? (llbm)"]
-    , HH.p_ [HH.text $ "click or hover on a score to see all historical high scores. double click on a score to play. click on a gamemode to see more. scores last updated "⋄ showTime state.lastUpdated ⋄". all times are in UTC."]
+    , HH.p_ [HH.text $ "click or hover on a score to see all historical high scores. double click on a score to play. click on a gamemode to see more."]
     , if state.context ≢ ε then HH.p_
       [ HH.text "viewing modes "
       , HH.b_ [HH.text $ show state.context]
@@ -421,7 +421,8 @@ render state =
         ]
       ]
     , details [HH.text "history"]
-      [ labeled "date: " ""
+      [ HH.div [classic "small"] [ HH.text $ " scores were last updated at "⋄ showTime state.lastUpdated ⋄". all times are in UTC. dates prepended with ≈ are approximate." ]
+      , labeled "date: " ""
         [ HP.type_ HP.InputDatetimeLocal
         , HP.value $ formatTime state.time
         , HE.onValueChange ChangeTime
