@@ -44,11 +44,15 @@ import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
 import Halogen.VDom.Driver (runUI)
 import Main.Common (type (⍪), bool, doWhen, (<<#>>), (∘), (≡), (≢), (⋄), (⍪))
+import Main.JsStuff (murmur3, formatTime, showTime)
 import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
-import Main.JsStuff (murmur3, formatTime, showTime)
 import Partial.Unsafe (unsafePartial)
 import Record as Record
+import Web.Event.Event (preventDefault)
+import Web.HTML (window)
+import Web.HTML.Window (open)
+import Web.UIEvent.MouseEvent as MouseEvent
 
 type Score = ScoreWith ()
 type ScoreS = ScoreWith (stricken ∷ Boolean)
@@ -101,7 +105,7 @@ table { modes, scol, showEmpty, context, scores, time } =
 classic ∷ ∀r i. String → HH.IProp (class ∷ String | r) i
 classic = HP.class_ ∘ H.ClassName
 
-data Leaderboard = Leaderboard
+newtype Leaderboard = Leaderboard
   { scores ∷ Int, unclaimed ∷ Int, ignored ∷ Int, lb ∷ Array (String⍪Int⍪Int) }
 leaderboard ∷ Array (Either Mode ScoreS) → Leaderboard
 leaderboard tab = Leaderboard
@@ -110,9 +114,9 @@ leaderboard tab = Leaderboard
     # foldl (\m i→HM.insertWith (join bilift2 (+)) i.owner (1 ⍪ max 0 i.score) m) HM.empty
     # HM.toArrayBy (⍪)
     # sortBy (on (flip compare) swap)
-  , scores:  sum $ bool 1 0 ∘ _.stricken <$> Compose tab
+  , scores:    sum $ bool 1 0 ∘ _.stricken <$> Compose tab
   , unclaimed: sum $ bool 0 1 ∘ isLeft     <$>         tab
-  , ignored: sum $ bool 0 1 ∘ _.stricken <$> Compose tab }
+  , ignored:   sum $ bool 0 1 ∘ _.stricken <$> Compose tab } 
 
 renderLeaderboard ∷ ∀w i. Int → Leaderboard → HH.HTML w i
 renderLeaderboard seed (Leaderboard {scores,unclaimed,ignored,lb}) = HH.div_ [HH.text label, table]
@@ -159,29 +163,31 @@ color ByDate _    score = hsl hue 60 (Int.floor lig)
 -- this is written in a strange way bc we dont want this to be uncurried
 -- (i dont want to call findScore once for every cell)
 selectionClass ∷ ∀r. State → Either Mode (ScoreWith r) → String
-selectionClass {selection: SelectNothing} = \_→"sel"
+selectionClass {selection: SelectNothing} = \_→"on"
 selectionClass {context, modes, selection: SelectRow m} =
-  (\x→if x then "sel" else "unsel")
+  bool "off" "on"
   ∘ (if m ≡ ε then \x→ any (\y→y ⋄ context ≡ x) modes
               else \x→ x ∩ m ≢ context)
   ∘ either identity _.mode
-selectionClass {scores, time, selection: SelectMode m} =
+selectionClass {scores, time, selection: SelectMode m, selectHard} =
   case findScore scores time m of
-    Left _ → \_→"unsel"
+    Left _ → \_→"on"
     Right {owner, mode} → case _ of
-      Left _ → "unsel"
-      Right {owner:owner'} | owner ≢ owner' → "unsel"
-      Right {mode: mode' } | mode  ≡ mode'  → "hover"
-      Right _ → "sel"
+      Left _ → "on"
+      Right {owner:owner'} | owner ≢ owner' → "off"
+      Right {mode: mode' } | mode  ≡ mode'  → bool "hover" "sel" selectHard
+      Right _ → "on"
 
 makeCell' ∷ ∀w. Mode → HH.Node DOM.HTMLtd w Action
 makeCell' mode a = 
   HH.td (a ⋄
-    [ HE.onMouseEnter \_→Select $ SelectMode mode
-    , HE.onMouseLeave \_→Select $ SelectNothing
+    [ HE.onMouseEnter \_→Select (SelectMode mode)
+    , HE.onMouseLeave \_→Select SelectNothing
+    , HE.onClick      \_→SelectHard (SelectMode mode)
+    , HE.onDoubleClick (Goto mode)
     ])
-  ∘ pure
-  ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
+  -- ∘ pure
+  -- ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
 
 makeCell ∷ ∀w. Int → Coloring → String → Either Mode ScoreS → HH.HTML w Action
 makeCell _    _        sel (Left mode) = makeCell' mode [classic sel] [HH.text $ show mode]
@@ -225,6 +231,8 @@ data Action =
   | AddContext Mode
   | ResetContext
   | Select Selection
+  | SelectHard Selection
+  | Goto Mode MouseEvent.MouseEvent
   | ChangeSpeed String
   | StartTimer
   | Tick
@@ -241,6 +249,7 @@ type State =
   , scol      ∷ Boolean
   , showEmpty ∷ Boolean
   , selection ∷ Selection
+  , selectHard∷ Boolean
   , timerSid  ∷ Maybe H.SubscriptionId
   , speed     ∷ Int
   , seed      ∷ Int
@@ -253,6 +262,7 @@ data Selection
   = SelectNothing
   | SelectMode Mode
   | SelectRow Mode
+derive instance Eq Selection
 
 rotate ∷ ∀a. Array a → Array a
 rotate arr = case unsnoc arr of
@@ -268,10 +278,10 @@ updateLb = (\state→ state { mLeaderboard = leaderboard (join state.mTab) } ) �
 initialState ∷ File → State
 initialState {scores,lastUpdated} =
   updateLb
-  { scores             , lastUpdated        , time:      lastUpdated
+  { scores             , lastUpdated      , time:      lastUpdated
   , modes:     Mode.all, disabledModes: [], context: ε
   , scol:      false   , showEmpty: true  , selection: SelectNothing
-  , timerSid:  Nothing , speed:     432000
+  , timerSid:  Nothing , speed:     432000, selectHard: false
   , seed:      3054    , coloring:  ByName
   , mTab:      [[]]    , mLeaderboard: leaderboard [] -- these will be replaced immediately
   }
@@ -294,11 +304,17 @@ handleAction = case _ of
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
                     # hush <#> fromDateTime
                     # traverse_ (\y→ H.modify_ $ updateLb ∘ _ {time = y})
-  ChangeTimeBy n  → H.modify_ \x→ updateLb x {time = advanceTime n x.lastUpdated x.time }
+  ChangeTimeBy n  → H.modify_ \x→ updateLb x {time = advanceTime n x.lastUpdated x.time}
   ResetTime       → H.modify_ \x→ updateLb x {time = x.lastUpdated}
   AddContext m    → H.modify_ \x→ updateLb x {context = doWhen (m ≢ ε) (append x.context) m}
   ResetContext    → H.modify_ $ updateLb ∘ _ {context = ε}
-  Select s        → H.modify_ _ {selection = s}
+  Select s        → whenM (not <$> H.gets _.selectHard) (H.modify_ _ {selection = s})
+  SelectHard s    → H.modify_ \x → if x.selection ≡ s && not x.selectHard
+                      then x { selectHard = true , selection = s }
+                      else x { selectHard = false, selection = SelectNothing }
+  Goto m e        → void do
+    H.liftEffect $ preventDefault $ MouseEvent.toEvent e
+    H.liftEffect $ open ("https://ubq323.website/ffbm/#"⋄show m) "_self" "" =<< window
   StartTimer      →
     H.gets _.timerSid >>= maybe
       (timer >>= H.subscribe >>= \sid → H.modify_ _ { timerSid = Just sid })
@@ -310,15 +326,17 @@ handleAction = case _ of
   ChangeColoring c→ H.modify_ _ {coloring = c}
 
 addHeaders ∷ ∀w. State → Array (Array (HH.HTML w Action)) → Array (Array (HH.HTML w Action))
-addHeaders {scol, showEmpty, modes} =
+addHeaders {scol, showEmpty, modes, selection, selectHard} =
   zipWith add $ doWhen showEmpty (cons ε) modes
     where add x = if scol then flip snoc $ head (if x ≡ ε then "right" else "diag") x
                           else cons $ head "left" x
-          head c x = HH.th 
-            [ classic c
-            , HE.onClick \_→AddContext x
-            , HE.onMouseEnter \_→Select $ SelectRow x
-            , HE.onMouseLeave \_→Select $ SelectNothing] [HH.text $ show x]
+          select x = if selection ≡ SelectRow x && selectHard then "sel" else "on"
+          head c x = HH.th
+            [ HP.classes $ [HH.ClassName c, HH.ClassName (select x)]
+            , HE.onClick \_→SelectHard (SelectRow x)
+            , HE.onDoubleClick \_→AddContext x
+            , HE.onMouseEnter \_→Select (SelectRow x)
+            , HE.onMouseLeave \_→Select SelectNothing] [HH.text $ show x]
 
 -- writing imperative code in functional languages is so fun
 strike
@@ -348,7 +366,7 @@ render ∷ ∀w. State → HH.HTML w Action
 render state =
   HH.div_ $ flip append [HH.main_ [ renderTable (contextify state) state.mTab ]] [HH.nav_
     [ HH.h2_ [HH.text ",leader lead board man? (llbm)"]
-    , HH.p_ [HH.text $ "click on a score to play. click on a gamemode to see more. scores last updated "⋄ showTime state.lastUpdated ⋄" (UTC+00:00)."]
+    , HH.p_ [HH.text $ "click or hover on a score to see all historical high scores. double click on a score to play. click on a gamemode to see more. scores last updated "⋄ showTime state.lastUpdated ⋄". all times are in UTC."]
     , if state.context ≢ ε then HH.p_
       [ HH.text "viewing modes "
       , HH.b_ [HH.text $ show state.context]
@@ -437,7 +455,7 @@ render state =
           [ HH.h3_ [ HH.text $ "leaderboard for row "⋄ show m]
           , renderLeaderboard state.seed
             $ leaderboard $ filter (\x→selectionClass state x ≢ "unsel") $ join state.mTab ]
-        _ → HH.text ""
+        SelectNothing → HH.text ""
     , HH.h3_ [ HH.text "leaderboard for current table" ]
     , renderLeaderboard state.seed state.mLeaderboard
     ]]
