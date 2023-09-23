@@ -285,8 +285,8 @@ advanceTime n now time = min now $ toInstant $ n + unwrap (unInstant time) / 100
 
 handleAction ∷ ∀o m. MonadAff m ⇒ Action → H.HalogenM State Action () o m Unit
 handleAction = case _ of
-  ToggleScol      → H.modify_ \x→ updateLb  x {scol      = not x.scol     }
-  ToggleShowEmpty → H.modify_ \x→ updateTab x {showEmpty = not x.showEmpty}
+  ToggleScol      → H.modify_ \x→ updateTab x {scol      = not x.scol     }
+  ToggleShowEmpty → H.modify_ \x→ updateLb  x {showEmpty = not x.showEmpty}
   ChangeModes s   → H.modify_ $ updateLb ∘ _ {modes = Mode.fromString <$> S.split (S.Pattern " ") s}
   DisableModes s  → H.modify_ $ updateLb ∘ _ {disabledModes = filter (_ ≢ ε) $ Mode.fromString <$> S.split (S.Pattern " ") s}
   ResetModes      → H.modify_ $ updateLb ∘ _ {modes = Mode.all}
@@ -433,6 +433,10 @@ render state =
         SelectMode m → HH.div_ 
           [ HH.h3_ [ HH.text $ "high score history for mode "⋄ show m ]
           , history state m ]
+        SelectRow m → HH.div_
+          [ HH.h3_ [ HH.text $ "leaderboard for row "⋄ show m]
+          , renderLeaderboard state.seed
+            $ leaderboard $ filter (\x→selectionClass state x ≢ "unsel") $ join state.mTab ]
         _ → HH.text ""
     , HH.h3_ [ HH.text "leaderboard for current table" ]
     , renderLeaderboard state.seed state.mLeaderboard
