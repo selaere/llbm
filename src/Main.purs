@@ -251,7 +251,7 @@ type State =
   , selection ∷ Selection
   , selectHard∷ Boolean
   , timerSid  ∷ Maybe H.SubscriptionId
-  , speed     ∷ Int
+  , speed     ∷ Number
   , seed      ∷ Int
   , coloring  ∷ Coloring
   , mTab      ∷ Array (Array (Either Mode ScoreS))
@@ -281,7 +281,7 @@ initialState {scores,lastUpdated} =
   { scores             , lastUpdated      , time:      lastUpdated
   , modes:     Mode.all, disabledModes: [], context: ε
   , scol:      false   , showEmpty: true  , selection: SelectNothing
-  , timerSid:  Nothing , speed:     432000, selectHard: false
+  , timerSid:  Nothing , speed:     120.0 , selectHard: false
   , seed:      3054    , coloring:  ByName
   , mTab:      [[]]    , mLeaderboard: leaderboard [] -- these will be replaced immediately
   }
@@ -319,9 +319,9 @@ handleAction = case _ of
     H.gets _.timerSid >>= maybe
       (timer >>= H.subscribe >>= \sid → H.modify_ _ { timerSid = Just sid })
       (\x→H.unsubscribe x *> H.modify_ _ { timerSid = Nothing })
-  ChangeSpeed s   → traverse_ (\y→H.modify_ _ { speed = y }) $ Int.fromString s
+  ChangeSpeed s   → traverse_ (\y→H.modify_ _ { speed = y }) $ Number.fromString s
   Tick            → H.modify_ $ updateLb ∘ \x→ x {time = 
-                      advanceTime (Int.toNumber x.speed * period) x.lastUpdated x.time }
+                      advanceTime (x.speed * 3600.0 * period) x.lastUpdated x.time }
   ChangeSeed s    → traverse_ (\i→H.modify_ _ {seed = i}) $ Int.fromString s
   ChangeColoring c→ H.modify_ _ {coloring = c}
 
@@ -439,7 +439,7 @@ render state =
       , HH.button 
         [HE.onClick \_→StartTimer]
         [HH.text if isNothing state.timerSid then "start" else "stop"]
-      , labeled " timelapse at " " s⋅s⁻¹"
+      , labeled " timelapse at " " h⋅s⁻¹"
         [ HP.type_ HP.InputNumber
         , HP.value $ show state.speed
         , HE.onValueChange ChangeSpeed
