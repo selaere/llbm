@@ -14,10 +14,10 @@ import DOM.HTML.Indexed as DOM
 import Data.Array (any, cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
-import Data.DateTime.Instant (Instant, fromDateTime, instant, toDateTime, unInstant)
-import Data.Either (Either(..), either, fromRight, hush, isLeft, note)
+import Data.DateTime.Instant (Instant, fromDateTime, instant, unInstant)
+import Data.Either (Either(..), either, hush, isLeft, note)
 import Data.Foldable (fold, sum, traverse_)
-import Data.Formatter.DateTime (formatDateTime, unformatDateTime)
+import Data.Formatter.DateTime (unformatDateTime)
 import Data.Function (on)
 import Data.Functor.Compose (Compose(..))
 import Data.HashMap (HashMap)
@@ -46,7 +46,7 @@ import Halogen.VDom.Driver (runUI)
 import Main.Common (type (⍪), bool, doWhen, (<<#>>), (∘), (≡), (≢), (⋄), (⍪))
 import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
-import Main.Murmur3 (hashString)
+import Main.JsStuff (murmur3, formatTime, showTime)
 import Partial.Unsafe (unsafePartial)
 import Record as Record
 
@@ -145,7 +145,7 @@ hsl h s l = "background-color:hsl("⋄show h⋄","⋄show s⋄"%,"⋄show l⋄"%
 colorName ∷ Int → String → String
 --color "☭🐝" = "background-color:rgb(198,234,169)"
 colorName seed name = hsl (h `mod` 360) 60 ((h `div` 360 `mod` 45 * 30) `div` 40 + 55)
-  where h = hashString name seed
+  where h = murmur3 name seed
 
 data Coloring = ByName | ByDate
 derive instance Eq Coloring
@@ -275,12 +275,6 @@ initialState {scores,lastUpdated} =
   , seed:      3054    , coloring:  ByName
   , mTab:      [[]]    , mLeaderboard: leaderboard [] -- these will be replaced immediately
   }
-
-formatTime ∷ Instant → String
-formatTime = fromRight "1970-01-01T00:00:00" ∘ formatDateTime "YYYY-MM-DDTHH:mm:ss" ∘ toDateTime
-
-showTime ∷ Instant → String
-showTime = fromRight "1970-01-01 00:00:00" ∘ formatDateTime "YYYY-MM-DD HH:mm:ss" ∘ toDateTime
 
 toInstant ∷ Number → Instant
 toInstant = unsafePartial $
