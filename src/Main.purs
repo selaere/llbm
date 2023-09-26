@@ -14,7 +14,7 @@ import DOM.HTML.Indexed as DOM
 import Data.Array (any, cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
-import Data.DateTime.Instant (Instant, fromDateTime, instant, unInstant)
+import Data.DateTime.Instant (Instant, diff, fromDateTime, instant, unInstant)
 import Data.Either (Either(..), either, hush, isLeft, note)
 import Data.Foldable (fold, sum, traverse_)
 import Data.Formatter.DateTime (unformatDateTime)
@@ -24,12 +24,12 @@ import Data.HashMap (HashMap)
 import Data.HashMap as HM
 import Data.HashSet as HSet
 import Data.Int as Int
-import Data.Maybe (Maybe(..), fromJust, isNothing, maybe)
-import Data.Newtype (under, unwrap)
+import Data.Maybe (Maybe(..), fromJust, isJust, isNothing, maybe)
+import Data.Newtype (un, under, unwrap)
 import Data.Number as Number
 import Data.String as S
 import Data.String.Regex as RE
-import Data.Time.Duration (Milliseconds(..))
+import Data.Time.Duration (Milliseconds(..), Seconds(..))
 import Data.Traversable (traverse)
 import Data.Tuple (swap)
 import Effect (Effect)
@@ -186,13 +186,15 @@ makeCell' mode a =
     , HE.onClick      \_→SelectHard (SelectMode mode)
     , HE.onDoubleClick (Goto mode)
     ])
-  -- ∘ pure
-  -- ∘ HH.a [HP.href $ "https://ubq323.website/ffbm#" ⋄ show mode]
 
-makeCell ∷ ∀w. Int → Coloring → String → Either Mode ScoreS → HH.HTML w Action
-makeCell _    _        sel (Left mode) = makeCell' mode [classic sel] [HH.text $ show mode]
-makeCell seed coloring sel (Right s  ) = makeCell' s.mode
-  [ HP.style $ color coloring seed s
+makeCell ∷ ∀w. State → String → Either Mode ScoreS → HH.HTML w Action
+makeCell _     sel (Left mode) = makeCell' mode [classic sel] [HH.text $ show mode]
+makeCell state sel (Right s  ) = makeCell' s.mode
+  [ HP.style 
+    $ color state.coloring state.seed s
+    # let t = (un Seconds $ diff s.date state.time) / (state.speed * 3600.0 * period) in
+      doWhen (isJust state.timerSid && -16.0 < t )
+             (\x→x ⋄ ";outline:2px rgba(255,200,0,"⋄ show (Int.floor $ 256.0 + t * 16.0) ⋄"%) solid")
   , HP.title $ s.owner⋄" "⋄ show s.score ⋄" in "⋄ show s.mode ⋄" at "⋄ showTime s.date
   , HP.classes $ doWhen s.stricken (_⋄[H.ClassName "stricken"]) [ H.ClassName sel ]
   ]
@@ -353,7 +355,7 @@ strike disabled =
 
 renderTable ∷ ∀w. State → Array (Array (Either Mode ScoreS)) → HH.HTML w Action
 renderTable state tab = tab
-  <<#>> (\m→ makeCell state.seed state.coloring (selectionClass state m) m)
+  <<#>> (\m→ makeCell state (selectionClass state m) m)
   # addHeaders state
   <#> HH.tr_
   # HH.table [classic "y"]
