@@ -11,12 +11,12 @@ import Control.Monad.Error.Class (liftEither)
 import Control.Monad.Rec.Class (forever)
 import Control.Monad.State as St
 import DOM.HTML.Indexed as DOM
-import Data.Array (any, cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
+import Data.Array (cons, filter, foldl, length, mapMaybe, mapWithIndex, snoc, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.Bifunctor (lmap)
 import Data.DateTime.Instant (Instant, diff, fromDateTime, instant, unInstant)
 import Data.Either (Either(..), either, hush, isLeft, note)
-import Data.Foldable (fold, sum, traverse_)
+import Data.Foldable (any, fold, sum, traverse_)
 import Data.Formatter.DateTime (unformatDateTime)
 import Data.Function (on)
 import Data.Functor.Compose (Compose(..))
@@ -25,6 +25,7 @@ import Data.HashMap as HM
 import Data.HashSet as HSet
 import Data.Int as Int
 import Data.Maybe (Maybe(..), fromJust, isJust, isNothing, maybe)
+import Data.Monoid as Monoid
 import Data.Newtype (un, under, unwrap)
 import Data.Number as Number
 import Data.String as S
@@ -118,13 +119,19 @@ leaderboard tab = Leaderboard
   , unclaimed: sum $ bool 0 1 ∘ isLeft     <$>         tab
   , ignored:   sum $ bool 0 1 ∘ _.stricken <$> Compose tab } 
 
-renderLeaderboard ∷ ∀w i. Int → Leaderboard → HH.HTML w i
-renderLeaderboard seed (Leaderboard {scores,unclaimed,ignored,lb}) = HH.div_ [HH.text label, table]
+renderLeaderboard ∷ ∀w i. State → Leaderboard → HH.HTML w i
+renderLeaderboard state (Leaderboard {scores,unclaimed,ignored,lb}) =
+  HH.div_ [HH.text label, table]
   where
     label = show scores⋄" scores, "⋄show unclaimed⋄" unclaimed, "⋄show ignored⋄" ignored"
-    table = mapWithIndex (\i (name⍪no⍪score) → HH.tr_
+    selOwner = case state.selection of
+      SelectMode m → _.owner <$> hush (findScore state.scores state.time m)
+      _ → Nothing
+    table = mapWithIndex (\i (name⍪no⍪score) →
+      HH.tr
+      (  Monoid.guard ( any (_ ≡ name) selOwner) [classic "selowner"] )
       [ HH.td_ [HH.text $ show (i+1) ⋄ "."]
-      , HH.td [HP.style $ colorName seed name] [HH.text name]
+      , HH.td [HP.style $ colorName state.seed name] [HH.text name]
       , HH.td_ [HH.text $ show no]
       , HH.td_ [HH.text $ show score]
       ]) lb
@@ -179,7 +186,7 @@ selectionClass {scores, time, selection: SelectMode m, selectHard} =
       Right _ → "on"
 
 makeCell' ∷ ∀w. Mode → HH.Node DOM.HTMLtd w Action
-makeCell' mode a = 
+makeCell' mode a =
   HH.td (a ⋄
     [ HE.onMouseEnter \_→Select (SelectMode mode)
     , HE.onMouseLeave \_→Select SelectNothing
@@ -193,7 +200,7 @@ makeCell state sel (Right s  ) = makeCell' s.mode
   [ HP.style 
     $ color state.coloring state.seed s
     # let t = (un Seconds $ diff s.date state.time) / (state.speed * 3600.0 * period) in
-      doWhen (isJust state.timerSid && -16.0 < t )
+      doWhen (isJust state.timerSid && t > -16.0 )
              (\x→x ⋄ ";outline:2px rgba(255,200,0,"⋄ show (Int.floor $ 256.0 + t * 16.0) ⋄"%) solid")
   , HP.title $ s.owner⋄" "⋄ show s.score ⋄" in "⋄ show s.mode ⋄" at "⋄ showTime s.date
   , HP.classes $ doWhen s.stricken (_⋄[H.ClassName "stricken"]) [ H.ClassName sel ]
@@ -456,11 +463,11 @@ render state =
           , history state m ]
         SelectRow m → HH.div_
           [ HH.h3_ [ HH.text $ "leaderboard for row "⋄ show m]
-          , renderLeaderboard state.seed
+          , renderLeaderboard state
             $ leaderboard $ filter (\x→selectionClass state x ≢ "unsel") $ join state.mTab ]
         SelectNothing → HH.text ""
     , HH.h3_ [ HH.text "leaderboard for current table" ]
-    , renderLeaderboard state.seed state.mLeaderboard
+    , renderLeaderboard state state.mLeaderboard
     ]]
   where skip n t = HH.button [HE.onClick \_→ChangeTimeBy $ Int.toNumber n ] [ HH.text t ]
         labeled pre post props = HH.label_ [HH.text pre, HH.input props, HH.text post]
