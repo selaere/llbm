@@ -22,6 +22,7 @@ outputs = { nixpkgs, flake-utils, easy-purescript-nix, ... }:
         #easy-ps.purs-tidy
         #pkgs.nodejs-18_x
         pkgs.esbuild
+        pkgs.cbqn
       ];
       shellHook = ''
         source <(spago --bash-completion-script `which spago`)
