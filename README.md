@@ -1,4 +1,4 @@
-see it live at <https://selaere.github.com/llbm/>
+see it live at <https://selaere.github.io/llbm/>
 
 ## what is this?
 ```log
