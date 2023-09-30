@@ -49,7 +49,7 @@ jobs:
          && purs-backend-es bundle-app --no-build -y'"
 
     - name: copy files
-      run: cp -r {high.txt,hist.txt,index.html,index.js} _site
+      run: "mkdir -p _site && cp -r {high.txt,hist.txt,index.html,index.js} _site"
     
     - name: "tree :)"
       run: tree -C _site
