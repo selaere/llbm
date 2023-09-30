@@ -32,6 +32,8 @@ jobs:
     steps:
     - name: checkout
       uses: actions/checkout@v3
+      with:
+        submodules: 'true'
 
     - name: install nix
       uses: cachix/install-nix-action@v19
@@ -43,8 +45,8 @@ jobs:
 
     - name: make app
       run:  "nix develop -c bash -c 'bqn process.bqn include/ffbm-data.json \
-      && spago -x prod.dhall build \
-      && purs-backend-es bundle-app --no-build -y'"
+         && spago -x prod.dhall build \
+         && purs-backend-es bundle-app --no-build -y'"
 
     - name: copy files
       run: cp -r {high.txt,hist.txt,index.html,index.js} _site
