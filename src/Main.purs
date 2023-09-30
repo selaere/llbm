@@ -233,7 +233,8 @@ data Action =
   | ToggleShowEmpty
   | ChangeTime String
   | ChangeTimeBy Number
-  | ResetTime
+  | SkipBackward
+  | SkipForward
   | ChangeModes String
   | DisableModes String
   | ResetModes
@@ -280,6 +281,7 @@ rotate arr = case unsnoc arr of
 
 updateTab ∷ State → State
 updateTab state = state {mTab = strike state.disabledModes (table (contextify state)) }
+
 -- this will be invoked by most actions, but NOT Select, so that we can have (hopefully) smoother hovering
 updateLb ∷ State → State
 updateLb = (\state→ state { mLeaderboard = leaderboard (join state.mTab) } ) ∘ updateTab
@@ -290,7 +292,7 @@ initialState {scores,lastUpdated} =
   { scores             , lastUpdated      , time:      lastUpdated
   , modes:     Mode.all, disabledModes: [], context: ε
   , scol:      false   , showEmpty: true  , selection: SelectNothing
-  , timerSid:  Nothing , speed:     120.0 , selectHard: false
+  , timerSid:  Nothing , speed:     240.0 , selectHard: false
   , seed:      3054    , coloring:  ByName
   , mTab:      [[]]    , mLeaderboard: leaderboard [] -- these will be replaced immediately
   }
@@ -314,7 +316,8 @@ handleAction = case _ of
                     # hush <#> fromDateTime
                     # traverse_ (\y→ H.modify_ $ updateLb ∘ _ {time = y})
   ChangeTimeBy n  → H.modify_ \x→ updateLb x {time = advanceTime n x.lastUpdated x.time}
-  ResetTime       → H.modify_ \x→ updateLb x {time = x.lastUpdated}
+  SkipForward     → H.modify_ \x→ updateLb x {time = x.lastUpdated}
+  SkipBackward    → H.modify_ \x→ updateLb x {time = toInstant 1602598381.0}
   AddContext m    → H.modify_ \x→ updateLb x {context = doWhen (m ≢ ε) (append x.context) m}
   ResetContext    → H.modify_ $ updateLb ∘ _ {context = ε}
   Select s        → whenM (not <$> H.gets _.selectHard) (H.modify_ _ {selection = s})
@@ -431,14 +434,15 @@ render state =
       ]
     , details [HH.text "history"]
       [ HH.div [classic "small"] [ HH.text $ " scores were last updated at "⋄ showTime state.lastUpdated ⋄". all times are in UTC. dates prepended with ≈ are approximate." ]
-      , labeled "date: " ""
+      , HH.button [HE.onClick \_→SkipBackward] [HH.text "⏮"]
+      , labeled " date: " ""
         [ HP.type_ HP.InputDatetimeLocal
         , HP.value $ formatTime state.time
         , HE.onValueChange ChangeTime
         , HP.attr (H.AttrName "step") "1"
         , HP.attr (H.AttrName "max") $ formatTime state.lastUpdated
         ]
-      , HH.button [HE.onClick \_→ResetTime] [HH.text "reset"]
+      , HH.button [HE.onClick \_→SkipForward] [HH.text "⏭"]
       , HH.br_
       , skip (-365*86400) "-y" , skip ( -30*86400) "-30d", skip (  -7*86400) "-7d"
       , skip (    -86400) "-d" , skip (     -3600) "-h"
