@@ -32,6 +32,8 @@ jobs:
     steps:
     - name: checkout
       uses: actions/checkout@v3
+      with:
+        submodules: 'true'
 
     - name: install nix
       uses: cachix/install-nix-action@v19
@@ -42,10 +44,12 @@ jobs:
       run:  "curl -L 'https://ubq323.website/ffbm/scores.cgi?act=all' > ffbm-data.json"
 
     - name: make app
-      run:  "nix-build makepage.nix --verbose --arg data ./ffbm-data.json"
+      run:  "nix develop -c bash -c 'bqn process.bqn ffbm-data.json \
+         && spago -x prod.dhall build \
+         && purs-backend-es bundle-app --no-build -y'"
 
-    - name: copy files  # See (https://github.com/actions/deploy-pages/issues/58)
-      run: cp -r -L --no-preserve=mode,ownership result _site
+    - name: copy files
+      run: "mkdir -p _site && cp -r {high.txt,hist.txt,index.html,index.js} _site"
     
     - name: "tree :)"
       run: tree -C _site

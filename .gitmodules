@@ -1,0 +1,6 @@
+[submodule "node-murmurhash"]
+	path = murmurhash
+	url = https://github.com/perezd/node-murmurhash
+[submodule "bqn-libs"]
+	path = bqn-libs
+	url = https://github.com/MLochbaum/bqn-libs
