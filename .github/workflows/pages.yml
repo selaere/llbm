@@ -44,7 +44,7 @@ jobs:
       run:  "curl -L 'https://ubq323.website/ffbm/scores.cgi?act=all' > ffbm-data.json"
 
     - name: make app
-      run:  "nix develop -c bash -c 'bqn process.bqn include/ffbm-data.json \
+      run:  "nix develop -c bash -c 'bqn process.bqn ffbm-data.json \
          && spago -x prod.dhall build \
          && purs-backend-es bundle-app --no-build -y'"
 
