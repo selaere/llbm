@@ -5,6 +5,7 @@ import Prelude
 import Data.Monoid (guard)
 import Data.Monoid.Endo (Endo(..))
 import Data.Newtype (under)
+import Data.Ord (lessThanOrEq, greaterThanOrEq)
 import Data.Tuple (Tuple(..))
 
 infixr 9 compose as ∘
@@ -23,6 +24,9 @@ infixr 5 append as ⋄
 
 infixr 6 Tuple as ⍪
 infixr 6 type Tuple as ⍪
+
+infixl 4 lessThanOrEq as ≤
+infixl 4 greaterThanOrEq as ≥
 
 mapMap ∷ ∀a b f g. Functor f ⇒ Functor g ⇒ (a → b) → f (g a) → f (g b)
 mapMap = map ∘ map

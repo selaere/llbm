@@ -44,7 +44,7 @@ import Halogen.HTML.Events as HE
 import Halogen.HTML.Properties as HP
 import Halogen.Subscription as HS
 import Halogen.VDom.Driver (runUI)
-import Main.Common (type (⍪), bool, doWhen, (<<#>>), (∘), (≡), (≢), (⋄), (⍪))
+import Main.Common (type (⍪), bool, doWhen, (<<#>>), (∘), (≡), (≢), (≤), (≥), (⋄), (⍪))
 import Main.JsStuff (murmur3, formatTime, showTime)
 import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
@@ -129,7 +129,7 @@ renderLeaderboard state (Leaderboard {scores,unclaimed,ignored,lb}) =
       _ → Nothing
     table = mapWithIndex (\i (name⍪no⍪score) →
       HH.tr
-      (  Monoid.guard ( any (_ ≡ name) selOwner) [classic "selowner"] )
+      ( Monoid.guard ( any (_ ≡ name) selOwner) [classic "selowner"] )
       [ HH.td_ [HH.text $ show (i+1) ⋄ "."]
       , HH.td [HP.style $ colorName state.seed name] [HH.text name]
       , HH.td_ [HH.text $ show no]
@@ -215,7 +215,7 @@ search ∷ ∀i. (i → Boolean) → Array i → Int
 search cmp arr = search_ cmp arr 0 (length arr)
   where
     search_ cmp arr lo hi
-      | lo >= hi  = lo
+      | lo ≥ hi   = lo
       | otherwise =
         let mid = (lo + hi) `div` 2 in
         case cmp <$> arr !! mid of
@@ -311,10 +311,10 @@ handleAction = case _ of
   ChangeModes s   → H.modify_ $ updateLb ∘ _ {modes = Mode.fromString <$> S.split (S.Pattern " ") s}
   DisableModes s  → H.modify_ $ updateLb ∘ _ {disabledModes = filter (_ ≢ ε) $ Mode.fromString <$> S.split (S.Pattern " ") s}
   ResetModes      → H.modify_ $ updateLb ∘ _ {modes = Mode.all}
-  ChangeTime s    → doWhen (S.length s <= 16) (_⋄":00") s
+  ChangeTime s    → doWhen (S.length s ≤ 16) (_⋄":00") s
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
                     # hush <#> fromDateTime
-                    # traverse_ (\y→ H.modify_ $ updateLb ∘ _ {time = y})
+                    # traverse_ \y→ H.modify_ $ updateLb ∘ _ {time = y}
   ChangeTimeBy n  → H.modify_ \x→ updateLb x {time = advanceTime n x.lastUpdated x.time}
   SkipForward     → H.modify_ \x→ updateLb x {time = x.lastUpdated}
   SkipBackward    → H.modify_ \x→ updateLb x {time = toInstant 1602598380.0}
