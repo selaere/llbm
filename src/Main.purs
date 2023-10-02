@@ -468,7 +468,7 @@ render state =
         SelectRow m → HH.div_
           [ HH.h3_ [ HH.text $ "leaderboard for row "⋄ show m]
           , renderLeaderboard state
-            $ leaderboard $ filter (\x→selectionClass state x ≢ "unsel") $ join state.mTab ]
+            $ leaderboard $ filter (\x→selectionClass state x ≢ "off") $ join state.mTab ]
         SelectNothing → HH.text ""
     , HH.h3_ [ HH.text "leaderboard for current table" ]
     , renderLeaderboard state state.mLeaderboard
