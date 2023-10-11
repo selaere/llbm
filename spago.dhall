@@ -5,6 +5,7 @@
   , "effect", "prelude", "bifunctors", "exceptions", "record", "functors"
   , "affjax", "affjax-web", "strings", "partial", "unordered-collections", "formatters"
   , "halogen", "halogen-subscriptions", "web-html", "web-events", "web-uievents"
+  , "web-pointerevents", "unsafe-coerce", "console"
   ]
 , packages = 
   https://github.com/purescript/package-sets/releases/download/psc-0.15.10-20230915/packages.dhall

@@ -48,11 +48,13 @@ import Main.Common (type (⍪), bool, doWhen, (<<#>>), (∘), (≡), (≢), (≤
 import Main.JsStuff (murmur3, formatTime, showTime)
 import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
+import Main.PointerEvents as PE
 import Partial.Unsafe (unsafePartial)
 import Record as Record
-import Web.Event.Event (preventDefault)
+import Web.Event.Event (Event, EventType(..), preventDefault)
 import Web.HTML (window)
 import Web.HTML.Window (open)
+import Web.PointerEvent.PointerEvent as PtrE
 import Web.UIEvent.MouseEvent as MouseEvent
 
 type Score = ScoreWith ()
@@ -185,14 +187,26 @@ selectionClass {scores, time, selection: SelectMode m, selectHard} =
       Right {mode: mode' } | mode  ≡ mode'  → bool "hover" "sel" selectHard
       Right _ → "on"
 
+pointerAttrs
+  ∷ ∀r. Selection → Action → Array (HH.IProp
+    ( onPointerDown  ∷ PE.PointerEvent
+    , onPointerEnter ∷ PE.PointerEvent
+    , onPointerLeave ∷ PE.PointerEvent
+    , onPointerMove  ∷ PE.PointerEvent
+    , onPointerUp    ∷ PE.PointerEvent
+    | r )
+    Action )
+pointerAttrs sel along =
+  [ PE.onPointerEnter\_→Select sel
+  , PE.onPointerLeave\_→Select SelectNothing
+  , PE.onPointerDown  $ Down along
+  , PE.onPointerUp    $ Up (SelectHard sel) along
+  , PE.onPointerMove \_→Move
+  , HE.handler (EventType "contextmenu") PreventDefault
+  ]
+
 makeCell' ∷ ∀w. Mode → HH.Node DOM.HTMLtd w Action
-makeCell' mode a =
-  HH.td (a ⋄
-    [ HE.onMouseEnter \_→Select (SelectMode mode)
-    , HE.onMouseLeave \_→Select SelectNothing
-    , HE.onClick      \_→SelectHard (SelectMode mode)
-    , HE.onDoubleClick (Goto mode)
-    ])
+makeCell' mode a = HH.td (a ⋄ pointerAttrs (SelectMode mode) (Goto mode))
 
 makeCell ∷ ∀w. State → String → Either Mode ScoreS → HH.HTML w Action
 makeCell _     sel (Left mode) = makeCell' mode [classic sel] [HH.text $ show mode]
@@ -242,12 +256,16 @@ data Action =
   | ResetContext
   | Select Selection
   | SelectHard Selection
-  | Goto Mode MouseEvent.MouseEvent
+  | Goto Mode
   | ChangeSpeed String
   | StartTimer
   | Tick
   | ChangeSeed String
   | ChangeColoring Coloring
+  | Down      Action PtrE.PointerEvent
+  | Up Action Action PtrE.PointerEvent
+  | Move
+  | PreventDefault Event
 
 type State =
   { scores    ∷ HashMap Mode (Array Score)
@@ -261,6 +279,7 @@ type State =
   , selection ∷ Selection
   , selectHard∷ Boolean
   , timerSid  ∷ Maybe H.SubscriptionId
+  , tapSid    ∷ Maybe H.SubscriptionId
   , speed     ∷ Number
   , seed      ∷ Int
   , coloring  ∷ Coloring
@@ -295,6 +314,7 @@ initialState {scores,lastUpdated} =
   , timerSid:  Nothing , speed:     240.0 , selectHard: false
   , seed:      3054    , coloring:  ByName
   , mTab:      [[]]    , mLeaderboard: leaderboard [] -- these will be replaced immediately
+  , tapSid:    Nothing
   }
 
 toInstant ∷ Number → Instant
@@ -306,6 +326,23 @@ advanceTime n now time = min now $ toInstant $ n + unwrap (unInstant time) / 100
 
 handleAction ∷ ∀o m. MonadAff m ⇒ Action → H.HalogenM State Action () o m Unit
 handleAction = case _ of
+  Down along ev → case PtrE.pointerType ev of
+    PtrE.Mouse → pure unit
+    _ → whenM (isNothing <$> H.gets _.tapSid)
+          (tapper along >>= H.subscribe >>= \sid → H.modify_ _ { tapSid = Just sid })
+  Up ashort along ev → case PtrE.pointerType ev of
+    PtrE.Mouse → case MouseEvent.button (PtrE.toMouseEvent ev) of
+      2 → handleAction ashort
+      0 → handleAction along
+      _ → pure unit
+    _ → H.gets _.tapSid >>= traverse_ \x→do
+      H.unsubscribe x
+      H.modify_ _ {tapSid = Nothing}
+      handleAction ashort
+  Move → H.gets _.tapSid >>= traverse_ \x→do
+    H.unsubscribe x
+    H.modify_ _ {tapSid = Nothing}
+  PreventDefault ev → H.liftEffect (preventDefault ev)
   ToggleScol      → H.modify_ \x→ updateTab x {scol      = not x.scol     }
   ToggleShowEmpty → H.modify_ \x→ updateLb  x {showEmpty = not x.showEmpty}
   ChangeModes s   → H.modify_ $ updateLb ∘ _ {modes = Mode.fromString <$> S.split (S.Pattern " ") s}
@@ -320,13 +357,12 @@ handleAction = case _ of
   SkipBackward    → H.modify_ \x→ updateLb x {time = toInstant 1602598380.0}
   AddContext m    → H.modify_ \x→ updateLb x {context = doWhen (m ≢ ε) (append x.context) m}
   ResetContext    → H.modify_ $ updateLb ∘ _ {context = ε}
-  Select s        → whenM (not <$> H.gets _.selectHard) (H.modify_ _ {selection = s})
+  Select s        → unlessM (H.gets _.selectHard) (H.modify_ _ {selection = s})
   SelectHard s    → H.modify_ \x → if x.selection ≡ s && not x.selectHard
                       then x { selectHard = true , selection = s }
                       else x { selectHard = false, selection = SelectNothing }
-  Goto m e        → void do
-    H.liftEffect $ preventDefault $ MouseEvent.toEvent e
-    H.liftEffect $ open ("https://ubq323.website/ffbm/#"⋄show m) "_self" "" =<< window
+  Goto m          → void $ H.liftEffect $
+    window >>= open ("https://ubq323.website/ffbm/#"⋄show m) "_self" ""
   StartTimer      →
     H.gets _.timerSid >>= maybe
       (timer >>= H.subscribe >>= \sid → H.modify_ _ { timerSid = Just sid })
@@ -344,11 +380,9 @@ addHeaders {scol, showEmpty, modes, selection, selectHard} =
                           else cons $ head "left" x
           select x = if selection ≡ SelectRow x && selectHard then "sel" else "on"
           head c x = HH.th
-            [ HP.classes $ [HH.ClassName c, HH.ClassName (select x)]
-            , HE.onClick \_→SelectHard (SelectRow x)
-            , HE.onDoubleClick \_→AddContext x
-            , HE.onMouseEnter \_→Select (SelectRow x)
-            , HE.onMouseLeave \_→Select SelectNothing] [HH.text $ show x]
+            ( [HP.classes $ [HH.ClassName c, HH.ClassName (select x)]]
+            ⋄ pointerAttrs (SelectRow x) (AddContext x) )
+            [HH.text $ show x]
 
 -- writing imperative code in functional languages is so fun
 strike
@@ -378,7 +412,8 @@ render ∷ ∀w. State → HH.HTML w Action
 render state =
   HH.div_ $ flip append [HH.main_ [ renderTable (contextify state) state.mTab ]] [HH.nav_
     [ HH.h2_ [HH.text ",leader lead board man? (llbm)"]
-    , HH.p_ [HH.text $ "click or hover on a score to see all historical high scores. double click on a score to play. click on a gamemode to see more."]
+    , HH.p_ [HH.text $
+      "hover or right click or tap on a score to see all historical high scores. left click or long tap on a score to play. left click or long tap on one of the headers in the "⋄bool "diagonal" "left" state.scol⋄" to see more."]
     , if state.context ≢ ε then HH.p_
       [ HH.text "viewing modes "
       , HH.b_ [HH.text $ show state.context]
@@ -488,9 +523,17 @@ timer = do
     H.liftEffect $ HS.notify listener Tick
   pure emitter
 
+tapper ∷ ∀m. MonadAff m ⇒ Action → m (HS.Emitter Action)
+tapper action = do
+  { emitter, listener } ← H.liftEffect HS.create
+  _ ← H.liftAff $ Aff.forkAff $ do
+    Aff.delay $ Milliseconds 500.0
+    H.liftEffect $ HS.notify listener action
+  pure emitter
+
 component ∷ ∀query o m. MonadAff m ⇒ H.Component query File o m
 component = H.mkComponent
   { initialState
   , render
-  , eval: H.mkEval $ H.defaultEval { handleAction = handleAction }
+  , eval: H.mkEval H.defaultEval { handleAction = handleAction }
   }

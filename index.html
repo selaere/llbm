@@ -2,12 +2,24 @@
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>,leader lead board man? (llbm)</title>
     <style>
 body>div {
     width: 100vw; height: 100vh;
-    display: flex; flex-flow: wrap-reverse;
-    overflow-y: scroll; /*-ms-overflow-style: none; scrollbar-width: none;*/
+    display: flex; flex-flow: wrap-reverse; 
+    overflow-y: scroll;/*-ms-overflow-style: none; scrollbar-width: none;*/
+}
+@media (width < 1100px) {
+    body {font-size: 0.8em;}
+    table.y { margin: auto auto; font-size: 0.45em; border-spacing: 0.1em; flex-shrink: 1; }
+}
+@media (width >= 1100px) {
+    nav {
+        overflow-y: scroll; /*-ms-overflow-style: none; scrollbar-width: none;*/
+        max-height: 100%;
+    }
+    table.y { border-spacing: 2px; }
 }
 main {
     flex-grow: 3;
@@ -16,20 +28,20 @@ main {
 nav {
     background-color: #eee;
     display: block; flex-grow: 1; box-sizing: border-box;
-    width: 30em; max-height: 100%; padding: 0.4em 0.8em;
-    overflow-wrap: anywhere; overflow-y: scroll; /*-ms-overflow-style: none; scrollbar-width: none;*/
+    width: 30em; padding: 0.4em 0.8em;
+    overflow-wrap: anywhere; 
 }
 body {
     margin: 0;
     font-family: sans-serif;
 }
-p, main, input, button { font-size: 1rem; }
-table.y {table-layout:fixed; border-spacing: 2px;}
+p, main, input, button { font-size: 1em; }
+table.y {table-layout:fixed; }
 table.y td,table.y th {
     font-size: 0.81em;
     min-width: 3.5em; max-width: 3.5em; height: 2.75em;
     white-space: nowrap; overflow: hidden; text-overflow: clip;
-    text-align: center; padding-top: 5px; box-sizing: border-box;
+    text-align: center; padding-top: 0.25em; box-sizing: border-box;
     border: 0px solid black;
     line-height: 95%;
 }
