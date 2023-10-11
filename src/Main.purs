@@ -250,7 +250,7 @@ data Action =
   | SkipBackward
   | SkipForward
   | ChangeModes String
-  | DisableModes String
+  | IgnoreModes String
   | ResetModes
   | AddContext Mode
   | ResetContext
@@ -273,7 +273,7 @@ type State =
   , time      ∷ Instant
   , context   ∷ Mode
   , modes     ∷ Array Mode
-  , disabledModes ∷ Array Mode
+  , ignoredModes ∷ Array Mode
   , scol      ∷ Boolean
   , showEmpty ∷ Boolean
   , selection ∷ Selection
@@ -299,7 +299,7 @@ rotate arr = case unsnoc arr of
   Nothing → []
 
 updateTab ∷ State → State
-updateTab state = state {mTab = strike state.disabledModes (table (contextify state)) }
+updateTab state = state {mTab = strike state.ignoredModes (table (contextify state)) }
 
 -- this will be invoked by most actions, but NOT Select, so that we can have (hopefully) smoother hovering
 updateLb ∷ State → State
@@ -309,7 +309,7 @@ initialState ∷ File → State
 initialState {scores,lastUpdated} =
   updateLb
   { scores             , lastUpdated      , time:      lastUpdated
-  , modes:     Mode.all, disabledModes: [], context: ε
+  , modes:     Mode.all, ignoredModes: [] , context: ε
   , scol:      false   , showEmpty: true  , selection: SelectNothing
   , timerSid:  Nothing , speed:     240.0 , selectHard: false
   , seed:      3054    , coloring:  ByName
@@ -346,7 +346,7 @@ handleAction = case _ of
   ToggleScol      → H.modify_ \x→ updateTab x {scol      = not x.scol     }
   ToggleShowEmpty → H.modify_ \x→ updateLb  x {showEmpty = not x.showEmpty}
   ChangeModes s   → H.modify_ $ updateLb ∘ _ {modes = Mode.fromString <$> S.split (S.Pattern " ") s}
-  DisableModes s  → H.modify_ $ updateLb ∘ _ {disabledModes = filter (_ ≢ ε) $ Mode.fromString <$> S.split (S.Pattern " ") s}
+  IgnoreModes s  → H.modify_ $ updateLb ∘ _ {ignoredModes = filter (_ ≢ ε) $ Mode.fromString <$> S.split (S.Pattern " ") s}
   ResetModes      → H.modify_ $ updateLb ∘ _ {modes = Mode.all}
   ChangeTime s    → doWhen (S.length s ≤ 16) (_⋄":00") s
                     # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
@@ -389,9 +389,9 @@ strike
   ∷ Array Mode
   → Array (Array (Either Mode Score))
   → Array (Array (Either Mode ScoreS))
-strike disabled =
+strike ignored =
   under Compose $ under Compose $ flip St.evalState HSet.empty ∘ traverse \cell→ do
-    opt ← if any (\x→x ⋄ cell.mode ≡ cell.mode) disabled
+    opt ← if any (\x→x ⋄ cell.mode ≡ cell.mode) ignored
           then pure true
           else St.gets (HSet.member cell.mode)
     unless opt (St.modify_ (HSet.insert cell.mode))
@@ -460,11 +460,11 @@ render state =
         ]
       , HH.button [HE.onClick \_→ResetModes] [HH.text "reset"]
       , HH.br_
-      , labeled "disabled modes: " ""
+      , labeled "ignored modes: " ""
         [ HP.type_ HP.InputText
         , HP.placeholder "t md"
-        , HP.value $ S.joinWith " " $ show <$> state.disabledModes
-        , HE.onValueChange DisableModes
+        , HP.value $ S.joinWith " " $ show <$> state.ignoredModes
+        , HE.onValueChange IgnoreModes
         ]
       ]
     , details [HH.text "history"]
