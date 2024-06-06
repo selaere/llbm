@@ -1,55 +1,69 @@
-module Main.Mode (Mode(..), all, fromString, merge, intersect, subtract, ε, (∩)) where
+module Main.Mode (Mode(..), allB, fromString, merge, intersect, subtract, fun, ε, (∩)) where
 
 import Prelude
 
 import Control.Alternative (guard)
 import Data.Array (catMaybes, elemIndex, foldl, length, mapWithIndex, (..))
-import Data.Foldable (sum)
-import Data.Hashable (class Hashable)
-import Data.Int.Bits (shl, (.&.), (.^.), (.|.))
-import Data.Newtype (class Newtype, unwrap)
-import Data.String (CodePoint, fromCodePointArray, toCodePointArray)
-import Main.Common ((<∘>), (∘), (≢))
+import Data.Hashable (class Hashable, hash)
+import Data.Int.Bits (complement, shl, (.&.), (.|.))
+import Data.Maybe (Maybe(..))
+import Data.String (CodePoint, fromCodePointArray, toCodePointArray, toUpper)
+import Main.Common (doWhen, (<∘>), (∘), (≢), (⍪))
+import Unsafe.Coerce (unsafeCoerce)
 
 
-newtype Mode = Mode Int
+data Mode = Mode Int Int
 
 ε ∷ Mode
-ε = Mode 0
+ε = Mode 0 0
 
 instance Show Mode where show = toString
-derive instance Newtype Mode _
 derive instance Eq Mode
 derive instance Ord Mode
 instance Bounded Mode where
   bottom = ε
-  top = fromString $ fromCodePointArray modeChars
+  top = fromString ∘ toUpper $ fromCodePointArray modeChars
 instance Semigroup Mode where append = merge
 instance Monoid Mode where mempty = ε
-instance Hashable Mode where hash (Mode n) = n
+instance Hashable Mode where hash (Mode m n) = hash (m⍪n)
 
 modeChars ∷ Array CodePoint
 modeChars = toCodePointArray "bwuipscmhaedtnvklgjyrf"
 
-all ∷ Array Mode
-all = Mode <$> shl 1 <$> 0 .. (length modeChars - 1)
+allB ∷ Array Mode
+allB = Mode 0 <$> shl 1 <$> 0 .. (length modeChars - 1)
+
+toUpperDumb ∷ CodePoint → CodePoint
+toUpperDumb = unsafeCoerce (_-32)
+toLowerDumb ∷ CodePoint → CodePoint
+toLowerDumb = unsafeCoerce (_+32)
 
 toString ∷ Mode → String
-toString (Mode 0   ) = "ε"
-toString (Mode mode) = modeChars
-  # mapWithIndex (\i x→ x <$ guard (mode .&. (shl 1 i) ≢ 0))
-  # catMaybes # fromCodePointArray
+toString (Mode _  0) = "ε"
+toString (Mode xf x) = fromCodePointArray ∘ catMaybes $ mapWithIndex go modeChars
+  where
+    go i code = guard (x.&.m ≢ 0) $> doWhen (xf.&.m ≢ 0) toUpperDumb code
+      where m = shl 1 i
 
 fromString ∷ String → Mode
-fromString =
-  Mode ∘ foldl (.|.) 0 ∘ (shl 1 ∘ sum ∘ elemIndex `flip` modeChars) <∘> toCodePointArray
+fromString = foldl merge ε ∘ go <∘> toCodePointArray
+  where 
+  go char = 
+    case elemIndex char modeChars of
+      Just x  → Mode 0 (shl 1 x)
+      Nothing → case elemIndex (toLowerDumb char) modeChars of
+        Just x  → join Mode (shl 1 x)
+        Nothing → ε
 
 merge ∷ Mode → Mode → Mode
-merge (Mode x) (Mode y) = Mode $ x .|. y
+merge (Mode xf x) (Mode yf y) = Mode (xf .|. yf) (x .|. y)
 
 intersect ∷ Mode → Mode → Mode
-intersect (Mode x) (Mode y) = Mode $ x .&. y
+intersect (Mode xf x) (Mode yf y) = Mode (xf .&. yf .&. x .&. y) (x .&. y)
 infixr 6 intersect as ∩
 
 subtract ∷ Mode → Mode → Mode
-subtract (Mode x) (Mode y) = Mode $ x .&. (y .^. unwrap (top∷Mode))
+subtract (Mode xf x) (Mode _ y) = Mode (xf .&. complement y) (x .&. complement y)
+
+fun ∷ Mode → Mode
+fun (Mode _ x) = Mode x x

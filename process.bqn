@@ -24,9 +24,9 @@ ToUnix ← { "null":0; Fmt ⌊dt.FromTimestamp •ParseFloat¨ ∊⟜"-: "⊸((�
 s‿t←0‿30‿47‿114‿179⋈1602598381‿1602599679‿1602605444‿1602694657‿1602763036
 prehist ← Fmt¨{b←0‿¯1⊸+˘s⍋𝕩 ⋄ +˝˘|⌊(-˝˘b⊏s)÷˜(⌽˘b⊏t)×𝕩-b⊏s}↕179
 data ← json.Parse •FChars ⊑•args
-! ∧´(<"name"‿"score"‿"modes"‿"ts")≡¨⊏¨data  # check key order hasnt changed
-table ← (⊐1⊏˘⊢)⊸⊔ prehist⌾(179⊸↑)∘ToUnix⌾(2⊸⊏˘) 1⌽˘>1⊸⊏¨data    # group by gamemode
-high  ← 1‿1‿0‿1⊸/˘>(⊑∘⍒⊏˘)⊸⊏¨table  # keep only highest scores per gamemode
-hist  ← ∾((¯9»⌈`)⊸<⊏˘)⊸/¨table      # keep scores that were higher than the earlier high score
-date  ← Fmt⌊•UnixTime@ #•file.Modified ⊑•args    # for "last updated"
+! ∧´(<"name"‿"score"‿"modes"‿"ts")≡¨⊏¨data                      # check key order hasnt changed
+table← (⊐1⊏˘⊢)⊸⊔ prehist⌾(179⊸↑)∘ToUnix⌾(2⊸⊏˘) 1⌽˘>1⊸⊏¨data    # group by gamemode
+high ← 1‿1‿0‿1⊸/˘>(⊑∘⍒⊏˘)⊸⊏¨table      # keep only highest scores per gamemode
+hist ← ∾((¯9»⌈`)⊸<⊏˘)⊸/¨table          # keep scores that were higher than the earlier high score
+date ← Fmt⌊•UnixTime@                  # for "last updated"
 "high.txt"‿"hist.txt"{𝕨•FLines date<⊸∾(⊣∾' '∾⊢)´¨<˘Fmt⌾⊑˘𝕩}¨high‿hist

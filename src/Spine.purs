@@ -18,6 +18,7 @@ import Data.HashMap (HashMap)
 import Data.HashMap as HM
 import Data.HashSet as HSet
 import Data.Int as Int
+import Data.Int.Bits ((.&.))
 import Data.Maybe (Maybe(..), fromJust, isNothing, maybe)
 import Data.Newtype (under, unwrap)
 import Data.Number as Number
@@ -71,13 +72,14 @@ parseFile file = do
   pure {scores, lastUpdated}
 
 table ∷ State → Array (Array (Either Mode Score))
-table { modes, scol, showEmpty, context, scores, time } =
+table { modes, scol, showEmpty, context, scores, time, funModes } =
   1 .. length modes
-  <#> take `flip` modes
+  <#> take `flip` (funWhen 2 modes)
   <#> doWhen scol rotate
-  # zipWith (map ∘ append) modes
+  # zipWith (map ∘ append) (funWhen 1 modes)
   # doWhen showEmpty (append [[context]])
   <#> map (findScore scores time)
+    where funWhen n = doWhen (funModes.&.n≢0) (map Mode.fun)
 
 newtype Leaderboard = Leaderboard
   { scores ∷ Int, unclaimed ∷ Int, ignored ∷ Int, lb ∷ Array (String⍪Int⍪Int) }
@@ -129,6 +131,7 @@ data Action =
   | Tick
   | ChangeSeed String
   | ChangeColoring Coloring
+  | ChangeFunModes Int
   | Down      Action PtrE.PointerEvent
   | Up Action Action PtrE.PointerEvent
   | Move
@@ -150,6 +153,7 @@ type State =
   , speed        ∷ Number
   , seed         ∷ Int
   , coloring     ∷ Coloring
+  , funModes     ∷ Int
   , mTab         ∷ Array (Array (Either Mode ScoreS))
   , mLeaderboard ∷ Leaderboard
   }
@@ -178,13 +182,13 @@ derive instance Eq Coloring
 initialState ∷ File → State
 initialState {scores,lastUpdated} =
   updateLb
-  { scores             , lastUpdated      , time:      lastUpdated
-  , modes:     Mode.all, ignoredModes: [] , context: ε
-  , scol:      false   , showEmpty: true  , selection: SelectNothing
-  , timerSid:  Nothing , speed:     240.0 , selectHard: false
-  , seed:      3054    , coloring:  ByName
-  , mTab:      [[]]    , mLeaderboard: leaderboard [] -- these will be replaced immediately
-  , tapSid:    Nothing
+  { scores              , lastUpdated      , time:       lastUpdated
+  , modes:     Mode.allB, ignoredModes: [] , context:    ε
+  , scol:      false    , showEmpty: true  , selection:  SelectNothing
+  , timerSid:  Nothing  , speed:     240.0 , selectHard: false
+  , seed:      3054     , coloring:  ByName
+  , mTab:      [[]]     , mLeaderboard: leaderboard [] -- these will be replaced immediately
+  , tapSid:    Nothing  , funModes:  0
   }
 
 toInstant ∷ Number → Instant
@@ -213,35 +217,36 @@ handleAction = case _ of
     H.unsubscribe x
     H.modify_ _ {tapSid = Nothing}
   PreventDefault ev → H.liftEffect (preventDefault ev)
-  ToggleScol      → H.modify_ \x→ updateTab x {scol      = not x.scol     }
-  ToggleShowEmpty → H.modify_ \x→ updateLb  x {showEmpty = not x.showEmpty}
-  ChangeModes s   → H.modify_ $ updateLb ∘ _ {modes = Mode.fromString <$> S.split (S.Pattern " ") s}
+  ToggleScol     → H.modify_ \x→ updateTab x {scol      = not x.scol     }
+  ToggleShowEmpty→ H.modify_ \x→ updateLb  x {showEmpty = not x.showEmpty}
+  ChangeModes s  → H.modify_ $ updateLb ∘ _ {modes = Mode.fromString <$> S.split (S.Pattern " ") s}
   IgnoreModes s  → H.modify_ $ updateLb ∘ _ {ignoredModes = filter (_ ≢ ε) $ Mode.fromString <$> S.split (S.Pattern " ") s}
-  ResetModes      → H.modify_ $ updateLb ∘ _ {modes = Mode.all}
-  ChangeTime s    → doWhen (S.length s ≤ 16) (_⋄":00") s
-                    # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
-                    # hush <#> fromDateTime
-                    # traverse_ \y→ H.modify_ $ updateLb ∘ _ {time = y}
-  ChangeTimeBy n  → H.modify_ \x→ updateLb x {time = advanceTime n x.lastUpdated x.time}
-  SkipForward     → H.modify_ \x→ updateLb x {time = x.lastUpdated}
-  SkipBackward    → H.modify_ \x→ updateLb x {time = toInstant 1602598380.0}
-  AddContext m    → H.modify_ \x→ updateLb x {context = doWhen (m ≢ ε) (append x.context) m}
-  ResetContext    → H.modify_ $ updateLb ∘ _ {context = ε}
-  Select s        → unlessM (H.gets _.selectHard) (H.modify_ _ {selection = s})
-  SelectHard s    → H.modify_ \x → if x.selection ≡ s && not x.selectHard
-                      then x { selectHard = true , selection = s }
-                      else x { selectHard = false, selection = SelectNothing }
-  Goto m          → void $ H.liftEffect $
+  ResetModes     → H.modify_ $ updateLb ∘ _ {modes = Mode.allB}
+  ChangeFunModes s→H.modify_ $ updateLb ∘ _ {funModes = s}
+  ChangeTime s   → doWhen (S.length s ≤ 16) (_⋄":00") s
+                   # unformatDateTime "YYYY-MM-DDTHH:mm:ss"
+                   # hush <#> fromDateTime
+                   # traverse_ \y→ H.modify_ $ updateLb ∘ _ {time = y}
+  ChangeTimeBy n → H.modify_ \x→ updateLb x {time = advanceTime n x.lastUpdated x.time}
+  SkipForward    → H.modify_ \x→ updateLb x {time = x.lastUpdated}
+  SkipBackward   → H.modify_ \x→ updateLb x {time = toInstant 1602598380.0}
+  AddContext m   → H.modify_ \x→ updateLb x {context = doWhen (m ≢ ε) (append x.context) m}
+  ResetContext   → H.modify_ $ updateLb ∘ _ {context = ε}
+  Select s       → unlessM (H.gets _.selectHard) (H.modify_ _ {selection = s})
+  SelectHard s   → H.modify_ \x → if x.selection ≡ s && not x.selectHard
+                     then x { selectHard = true , selection = s }
+                     else x { selectHard = false, selection = SelectNothing }
+  Goto m         → void ∘ H.liftEffect $
     window >>= open ("https://ubq323.website/ffbm/#"⋄show m) "_self" ""
-  StartTimer      →
+  StartTimer     →
     H.gets _.timerSid >>= maybe
       (timer >>= H.subscribe >>= \sid → H.modify_ _ { timerSid = Just sid })
       (\x→H.unsubscribe x *> H.modify_ _ { timerSid = Nothing })
-  ChangeSpeed s   → traverse_ (\y→H.modify_ _ { speed = y }) $ Number.fromString s
-  Tick            → H.modify_ $ updateLb ∘ \x→ x {time = 
+  ChangeSpeed s  → traverse_ (\y→H.modify_ _ { speed = y }) $ Number.fromString s
+  Tick           → H.modify_ $ updateLb ∘ \x→ x {time = 
                       advanceTime (x.speed * 3600.0 * period) x.lastUpdated x.time }
-  ChangeSeed s    → traverse_ (\i→H.modify_ _ {seed = i}) $ Int.fromString s
-  ChangeColoring c→ H.modify_ _ {coloring = c}
+  ChangeSeed s   → traverse_ (\i→H.modify_ _ {seed = i}) $ Int.fromString s
+  ChangeColoring c → H.modify_ _ {coloring = c}
 
 -- writing imperative code in functional languages is so fun
 strike
@@ -274,7 +279,7 @@ timer = do
 tapper ∷ ∀m. MonadAff m ⇒ Action → m (HS.Emitter Action)
 tapper action = do
   { emitter, listener } ← H.liftEffect HS.create
-  _ ← H.liftAff $ Aff.forkAff $ do
+  _ ← H.liftAff $ Aff.forkAff do
     Aff.delay $ Milliseconds 500.0
     H.liftEffect $ HS.notify listener action
   pure emitter

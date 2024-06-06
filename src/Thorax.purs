@@ -209,6 +209,14 @@ render state =
         , HP.value $ S.joinWith " " $ show <$> state.ignoredModes
         , HE.onValueChange IgnoreModes
         ]
+        , HH.div_ let 
+            b x n = labeled "" x
+              [ HP.type_ HP.InputRadio
+              , HP.id "funmodes"
+              , HP.checked $ state.funModes ≡ n
+              , HE.onClick \_→ChangeFunModes n
+              ]
+          in [ HH.text "fun modes:", b "bw" 0, b "bW" 1, b "Bw" 2, b "BW" 3 ]
       ]
     , details [HH.text "history"]
       [ HH.div [classic "small"] [ HH.text $ " scores were last updated at "⋄ showTime state.lastUpdated ⋄". all times are in UTC. dates prepended with ≈ are approximate." ]
