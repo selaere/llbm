@@ -24,22 +24,22 @@ env:
 jobs:
   make-page:
     runs-on: ubuntu-latest
-    
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
     - name: checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         submodules: 'true'
 
     - name: install nix
-      uses: cachix/install-nix-action@v19
+      uses: cachix/install-nix-action@v27
       with:
         nix_path: nixpkgs=channel:nixos-unstable
-        
+
     - name: download data
       run:  "curl -L 'https://ubq323.website/ffbm/scores.cgi?act=all' > ffbm-data.json"
 
@@ -50,16 +50,16 @@ jobs:
 
     - name: copy files
       run: "mkdir -p _site && cp -r {high.txt,hist.txt,index.html,index.js} _site"
-    
+
     - name: "tree :)"
       run: tree -C _site
-    
+
     - name: "configure GitHub Pages"
-      uses: actions/configure-pages@v3.0.2
+      uses: actions/configure-pages@v5.0.0
 
     - name: "upload pages artifact"
-      uses: actions/upload-pages-artifact@v2
+      uses: actions/upload-pages-artifact@v3.0.1
 
     - name: "deploy to GitHub Pages"
       id: deployment
-      uses: actions/deploy-pages@v3
+      uses: actions/deploy-pages@v4.0.5
