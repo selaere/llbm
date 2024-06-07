@@ -15,7 +15,7 @@ outputs = { nixpkgs, flake-utils, easy-purescript-nix, ... }:
     in { devShells.default = pkgs.mkShell {
       name = "purescript-custom-shell";
       buildInputs = [
-        easy-ps.purs-0_15_10
+        easy-ps.purs-0_15_15
         easy-ps.spago
         easy-ps.purs-backend-es
         #easy-ps.purescript-language-server
