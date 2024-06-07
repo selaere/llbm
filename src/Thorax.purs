@@ -167,7 +167,7 @@ render state =
       , HH.button [ HE.onClick \_→ResetContext ] [HH.text "reset"]
       ] else HH.text ""
     , details [HH.text "table settings"]
-      [ labeled "" "diagonal headers"
+      [ labeled "" "show 1-letter scores in a column"
         [ HP.type_ HP.InputCheckbox
         , HP.checked state.scol
         , HE.onClick \_→ToggleScol]
