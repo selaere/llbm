@@ -2,14 +2,13 @@ module Main.Spine where
 
 import Prelude
 
-import Control.Alternative (guard)
 import Control.Biapply (bilift2)
 import Control.Monad.Rec.Class (forever)
 import Control.Monad.State as St
-import Data.Array (filter, foldl, length, mapMaybe, sortBy, tail, take, uncons, unsnoc, zipWith, (!!), (..))
+import Data.Array (filter, foldl, length, mapMaybe, modifyAt, sortBy, tail, take, transpose, uncons, unsnoc, zipWith, (!!), (..))
 import Data.Array.NonEmpty (toArray)
 import Data.DateTime.Instant (Instant, fromDateTime, instant, unInstant)
-import Data.Either (Either, hush, isLeft, note)
+import Data.Either (hush)
 import Data.Foldable (any, sum, traverse_)
 import Data.Formatter.DateTime (unformatDateTime)
 import Data.Function (on)
@@ -31,7 +30,7 @@ import Effect.Aff as Aff
 import Effect.Aff.Class (class MonadAff)
 import Halogen as H
 import Halogen.Subscription as HS
-import Main.Common (type (⍪), bool, doWhen, (∘), (≡), (≢), (≤), (≥), (⋄), (⍪))
+import Main.Common (type (⍪), bool, doWhen, (<<#>>), (<∘>), (∘), (≡), (≢), (≤), (≥), (⋄), (⍪))
 import Main.Mode (Mode, ε, (∩))
 import Main.Mode as Mode
 import Partial.Unsafe (unsafePartial)
@@ -42,7 +41,7 @@ import Web.HTML.Window (open)
 import Web.PointerEvent.PointerEvent as PtrE
 import Web.UIEvent.MouseEvent as MouseEvent
 
-type Score = ScoreWith ()
+type Score  = ScoreWith ()
 type ScoreS = ScoreWith (stricken ∷ Boolean)
 
 type ScoreWith r = 
@@ -51,6 +50,13 @@ type ScoreWith r =
   , date  ∷ Instant
   , owner ∷ String
   | r }
+
+--data CellWith r = Filled (ScoreWith r) | Unclaimed Mode | Empty | Header String Mode
+
+data Cell = Filled (ScoreWith (stricken ∷ Boolean)) | Unclaimed Mode | Empty | Header String Mode
+derive instance Eq Cell
+
+--derive instance Eq Cell
 
 parseLine ∷ String → Maybe Score
 parseLine a = join (RE.match <$> reg <@> a) <#> toArray >>= tail >>= case _ of
@@ -71,28 +77,39 @@ parseFile file = do
   let scores = foldl (\m i→HM.insertWith (flip (⋄)) i.mode [i] m) mempty $ mapMaybe parseLine tail
   pure {scores, lastUpdated}
 
-table ∷ State → Array (Array (Either Mode Score))
+table ∷ State → Array (Array Cell)
+table s@{funModes: 4} =
+  zipWith (⋄)
+  (doWhen (not s.showEmpty) ([[]]⋄_) $ table s {funModes=0})
+  (doWhen s.showEmpty go ∘ ([Empty]⋄_) <∘> (_⋄[[]]) ∘ transpose $ table s {funModes=3,showEmpty=false})
+  where go = unsafePartial $ fromJust ∘ modifyAt 0 (fromJust ∘ tail)
 table { modes, scol, showEmpty, context, scores, time, funModes } =
   1 .. length modes
-  <#> take `flip` (funWhen 2 modes)
+  <#> (take <@> funWhen 2 modes)
   <#> doWhen scol rotate
   # zipWith (map ∘ append) (funWhen 1 modes)
   # doWhen showEmpty (append [[context]])
-  <#> map (findScore scores time)
+  <<#>> findCell scores time
     where funWhen n = doWhen (funModes.&.n≢0) (map Mode.fun)
+
+asFilled ∷ Cell → Maybe ScoreS
+asFilled (Filled x) = Just x
+asFilled _          = Nothing
 
 newtype Leaderboard = Leaderboard
   { scores ∷ Int, unclaimed ∷ Int, ignored ∷ Int, lb ∷ Array (String⍪Int⍪Int) }
-leaderboard ∷ Array (Either Mode ScoreS) → Leaderboard
+leaderboard ∷ Array Cell → Leaderboard
 leaderboard tab = Leaderboard
-  { lb: tab
-    # mapMaybe (hush >=> \x→x <$ guard (not x.stricken))
-    # foldl (\m i→HM.insertWith (join bilift2 (+)) i.owner (1 ⍪ max 0 i.score) m) HM.empty
+  { lb: filter (not ∘ _.stricken) tabs
+    # foldl (\m i→HM.insertWith (join bilift2 (+)) i.owner (1⍪ max 0 i.score) m) HM.empty
     # HM.toArrayBy (⍪)
-    # sortBy (on (flip compare) swap)
-  , scores:    sum $ bool 1 0 ∘ _.stricken <$> Compose tab
-  , unclaimed: sum $ bool 0 1 ∘ isLeft     <$>         tab
-  , ignored:   sum $ bool 0 1 ∘ _.stricken <$> Compose tab } 
+    # sortBy (flip compare `on` swap)
+  , scores:    sum $ bool 1 0 ∘ _.stricken  <$> tabs
+  , unclaimed: sum $ bool 0 1 ∘ isUnclaimed <$> tab
+  , ignored:   sum $ bool 0 1 ∘ _.stricken  <$> tabs }
+  where tabs = mapMaybe asFilled tab
+        isUnclaimed (Unclaimed _) = true
+        isUnclaimed _ = false
 
 search ∷ ∀i. (i → Boolean) → Array i → Int
 search cmp arr = search_ cmp arr 0 (length arr)
@@ -106,10 +123,13 @@ search cmp arr = search_ cmp arr 0 (length arr)
           Just false → search_ cmp arr lo mid
           Nothing    → hi
 
-findScore ∷ HashMap Mode (Array Score) → Instant → Mode → Either Mode Score
-findScore scores time mode = note mode do
+findScore ∷ HashMap Mode (Array Score) → Instant → Mode → Maybe Score
+findScore scores time mode = do
   arr ← HM.lookup mode scores
   arr !! search (\y→ y.date > time) arr
+
+findCell ∷ HashMap Mode (Array Score) → Instant → Mode → Cell
+findCell s t m = maybe (Unclaimed m) (Filled ∘ Record.merge { stricken: false }) (findScore s t m)
 
 data Action =
     ToggleScol
@@ -154,7 +174,7 @@ type State =
   , seed         ∷ Int
   , coloring     ∷ Coloring
   , funModes     ∷ Int
-  , mTab         ∷ Array (Array (Either Mode ScoreS))
+  , mTab         ∷ Array (Array Cell)
   , mLeaderboard ∷ Leaderboard
   }
 
@@ -249,17 +269,18 @@ handleAction = case _ of
   ChangeColoring c → H.modify_ _ {coloring = c}
 
 -- writing imperative code in functional languages is so fun
-strike
-  ∷ Array Mode
-  → Array (Array (Either Mode Score))
-  → Array (Array (Either Mode ScoreS))
+strike ∷ Array Mode → Array (Array Cell) → Array (Array Cell)
 strike ignored =
-  under Compose $ under Compose $ flip St.evalState HSet.empty ∘ traverse \cell→ do
-    opt ← if any (\x→x ⋄ cell.mode ≡ cell.mode) ignored
-          then pure true
-          else St.gets (HSet.member cell.mode)
-    unless opt (St.modify_ (HSet.insert cell.mode))
-    pure $ Record.merge cell { stricken: opt }
+  under Compose $ flip St.evalState HSet.empty ∘ traverse case _ of
+    Filled cell → do 
+      opt ← if any (\x→x ⋄ cell.mode ≡ cell.mode) ignored
+            then pure true
+            else St.gets (HSet.member cell.mode)
+      unless opt (St.modify_ (HSet.insert cell.mode))
+      pure ∘ Filled $ Record.merge cell { stricken: opt }
+    Unclaimed x → pure (Unclaimed x)
+    Empty       → pure Empty
+    Header a b  → pure (Header a b)
 
 contextify ∷ State → State
 contextify state@{context,modes} = state { modes =
